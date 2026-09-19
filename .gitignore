@@ -1,0 +1,15 @@
+# Node
+node_modules/
+npm-debug.log*
+
+# Local env (YT_API_KEY etc. — never commit the key)
+.env
+.env.local
+
+# Test output
+test-results/
+playwright-report/
+screenshots/
+
+# macOS
+.DS_Store
