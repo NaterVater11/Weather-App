@@ -233,7 +233,7 @@ app breaks the tests loudly instead of silently testing stale code.
   against the 125 m per degree rule of thumb and for step-size sensitivity
 - chart tick spacing, wind barb markup, and color-scale interpolation
 
-`test/boards.test.mjs` runs `boardsFor` against **68 real cities** using the same
+`test/boards.test.mjs` runs `boardsFor` against **66 real cities** using the same
 `us-atlas` states file the app fetches, covering every rule in the table: all nine split
 states in both directions, the territories, open water, and the pre-atlas cold start.
 
