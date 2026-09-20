@@ -286,6 +286,9 @@ h3.sub{font-family:var(--cond);font-weight:700;font-size:18px;margin:18px 0 6px}
     <button class="icon-btn" id="boardsBtn" aria-label="Chasers and forums" aria-expanded="false" aria-controls="boardsPanel">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h12v9H9l-4 3v-3H4z"/><path d="M19 9h1v9h-1v3l-4-3h-5v-1"/></svg>
     </button>
+    <button class="icon-btn" id="share" aria-label="Copy a link to this view">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="2.8"/><circle cx="6" cy="12" r="2.8"/><circle cx="18" cy="19" r="2.8"/><path d="M8.5 13.5l7 4M15.5 6.5l-7 4"/></svg>
+    </button>
     <button class="icon-btn" id="layersBtn" aria-label="Layers" aria-expanded="false" aria-controls="layersPanel">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></svg>
     </button>
@@ -485,16 +488,89 @@ const FIELDS = [
 ];
 const FIELD = Object.fromEntries(FIELDS.map(f => [f.key, f]));
 const DETAIL = { low: 110, med: 190, high: 320 };
+
+/* ------------------------------------------------------------------ */
+/* Shareable view                                                      */
+/* ------------------------------------------------------------------ */
+// Where you are, which model and field, which hour, which spot, which units: all of it
+// fits in the URL, so a link carries exactly what the sender was looking at. The hash
+// is rewritten in place as the map moves, so the address bar is always shareable.
+
+/**
+ * Reads a location hash into a view. Everything here arrives from a stranger's link,
+ * so each value is validated and anything malformed is dropped rather than trusted.
+ */
+/**
+ * A real key of its own, not one inherited from Object.prototype. A plain lookup lets
+ * "__proto__", "constructor" and "toString" through as truthy, and the app would then
+ * treat Object.prototype as a model and render nothing.
+ */
+const owns = (obj, k) => typeof k === 'string' && Object.prototype.hasOwnProperty.call(obj, k);
+
+function parseView(hash) {
+  const out = {};
+  const raw = String(hash == null ? '' : hash).replace(/^#/, '');
+  if (!raw) return out;
+  let p;
+  try { p = new URLSearchParams(raw); } catch { return out; }
+  const num = (k, lo, hi) => {
+    if (!p.has(k)) return undefined;
+    const v = Number(p.get(k));
+    return Number.isFinite(v) && v >= lo && v <= hi ? v : undefined;
+  };
+  const coords = k => {
+    const parts = (p.get(k) || '').split(',');
+    // An empty part would pass as 0 and drop the view on Null Island.
+    if (parts.length !== 2 || parts.some(x => !x.trim())) return undefined;
+    const lat = Number(parts[0]), lon = Number(parts[1]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return undefined;
+    return Math.abs(lat) <= 90 && Math.abs(lon) <= 180 ? { lat, lon } : undefined;
+  };
+  const z = num('z', 1, 20); if (z !== undefined) out.zoom = z;
+  const c = coords('c'); if (c) out.center = c;
+  const t = num('t', 0, 4e9); if (t !== undefined) out.time = t;
+  const pt = coords('p'); if (pt) out.point = pt;
+  if (owns(MODEL, p.get('m'))) out.model = p.get('m');
+  if (owns(FIELD, p.get('f'))) out.field = p.get('f');
+  if (UNIT_SYSTEMS.includes(p.get('u'))) out.units = p.get('u');
+  return out;
+}
+
+/** The inverse. Commas are left unescaped so the link stays readable. */
+function buildView(v) {
+  const p = new URLSearchParams();
+  if (Number.isFinite(v.zoom)) p.set('z', String(Math.round(v.zoom * 10) / 10));
+  if (v.center) p.set('c', `${(+v.center.lat).toFixed(4)},${(+v.center.lon).toFixed(4)}`);
+  if (v.model) p.set('m', v.model);
+  if (v.field) p.set('f', v.field);
+  if (Number.isFinite(v.time)) p.set('t', String(Math.round(v.time)));
+  if (v.point) p.set('p', `${(+v.point.lat).toFixed(4)},${(+v.point.lon).toFixed(4)}`);
+  if (v.units) p.set('u', v.units);
+  const q = p.toString().replace(/%2C/g, ',');
+  return q ? '#' + q : '';
+}
+
+/** The frame closest to a wanted valid time. Runs change, so the index cannot be shared. */
+function nearestTimeIndex(times, unix) {
+  if (!times || !times.length || !Number.isFinite(unix)) return 0;
+  let best = 0, bestD = Infinity;
+  for (let i = 0; i < times.length; i++) {
+    const d = Math.abs(times[i] - unix);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;
+}
+const shared = (() => { try { return parseView(location.hash); } catch { return {}; } })();
 const LEVELS = [1000, 975, 950, 925, 900, 850, 800, 750, 700, 650, 600, 550, 500, 450, 400, 350, 300, 250, 200, 150, 100];
 
 /* ------------------------------------------------------------------ */
 /* State                                                               */
 /* ------------------------------------------------------------------ */
 const state = {
-  model: MODEL[store.get('model')] ? store.get('model') : 'hrrr',
-  field: FIELD[store.get('field')] ? store.get('field') : 'temp',
+  model: owns(MODEL, store.get('model')) ? store.get('model') : 'hrrr',
+  field: owns(FIELD, store.get('field')) ? store.get('field') : 'temp',
   opacity: store.get('opacity', 0.72),
-  detail: DETAIL[store.get('detail')] ? store.get('detail') : 'med',
+  detail: owns(DETAIL, store.get('detail')) ? store.get('detail') : 'med',
   layers: Object.assign({ radar: false, alerts: true, sat: false, mrms: false, chasers: false, isobars: false, barbs: false }, store.get('layers', {})),
   grid: null,
   times: [],
@@ -507,6 +583,11 @@ const state = {
   hidden: new Set(store.get('hiddenModels', [])),
   compare: null
 };
+// A shared link wins over what this browser remembered.
+if (shared.model) state.model = shared.model;
+if (shared.field) state.field = shared.field;
+if (shared.units) state.units = shared.units;
+let pendingTime = Number.isFinite(shared.time) ? shared.time : null;
 if (FIELD[state.field].only && !FIELD[state.field].only.includes(state.model)) state.field = 'temp';
 const model = () => MODEL[state.model];
 const field = () => FIELD[state.field];
@@ -527,7 +608,9 @@ function fmtQty(kind, v, withUnit = true) {
 /* ------------------------------------------------------------------ */
 /* Map                                                                 */
 /* ------------------------------------------------------------------ */
-const view = store.get('view', { c: [35.4, -79.6], z: 6 });
+const view = shared.center
+  ? { c: [shared.center.lat, shared.center.lon], z: shared.zoom == null ? 7 : shared.zoom }
+  : store.get('view', { c: [35.4, -79.6], z: 6 });
 const map = L.map('map', { zoomControl: false, worldCopyJump: true, minZoom: 3, maxZoom: 12, attributionControl: true })
   .setView(view.c, view.z);
 map.attributionControl.setPrefix(false);
@@ -728,20 +811,19 @@ async function loadGrid(force = false) {
 }
 
 function useGrid(g) {
-  const prevTime = state.times[state.t];
+  // Hold the hour across a model or grid change, and honour one asked for by a link.
+  const prevTime = state.times[state.t] != null ? state.times[state.t] : pendingTime;
+  pendingTime = null;
   state.grid = g;
   state.times = g.times;
-  let t = 0;
-  if (prevTime != null) {
-    let best = Infinity;
-    g.times.forEach((x, i) => { const d = Math.abs(x - prevTime); if (d < best) { best = d; t = i; } });
-  }
+  const t = prevTime != null ? nearestTimeIndex(g.times, prevTime) : 0;
   state.t = t;
   const s = $('#slider');
   s.max = Math.max(0, g.T - 1);
   s.value = t;
   drawDayTicks();
   render();
+  syncHash();
   if (state.point && state.tab === 'sounding') scheduleSounding();
 }
 
@@ -1177,12 +1259,14 @@ function setModel(key) {
   if (field().only && !field().only.includes(key)) { state.field = 'precip1'; store.set('field', state.field); }
   renderChips(); renderLegend();
   loadGrid();
+  syncHash();
   if (state.point && state.tab === 'sounding') loadSounding();
 }
 function setField(key) {
   if (key === state.field) return;
   state.field = key; store.set('field', key);
   renderChips(); renderLegend(); render();
+  syncHash();
 }
 
 /* play */
@@ -1205,6 +1289,7 @@ function setTime(t) {
   state.t = Math.max(0, Math.min(state.times.length - 1, t));
   $('#slider').value = state.t;
   render();
+  syncHash();
   if (state.point) { markCharts(); if (state.tab === 'sounding') scheduleSounding(); }
 }
 
@@ -1246,7 +1331,7 @@ function closeSheet(id) {
   $('#' + id).hidden = true;
   if (SHEET_BTN[id]) $(SHEET_BTN[id]).setAttribute('aria-expanded', 'false');
   if (id === 'boardsPanel') { boardsPt = null; stopVideo(); syncChaserTimer(); }
-  if (id === 'pointPanel') { state.point = null; if (pointMarker) { map.removeLayer(pointMarker); pointMarker = null; } }
+  if (id === 'pointPanel') { state.point = null; if (pointMarker) { map.removeLayer(pointMarker); pointMarker = null; } syncHash(); }
 }
 $$('[data-close]').forEach(b => b.addEventListener('click', () => closeSheet(b.closest('.sheet').id)));
 
@@ -1595,6 +1680,7 @@ function openPoint(ll, name) {
   soundingKey = '';
   nowKey = '';
   syncSaveButton();
+  syncHash();
   if (!name) nameSpot(state.point);
   showTab(state.tab);
 }
@@ -2456,6 +2542,44 @@ $$('[data-layer]').forEach(inp => {
   inp.checked = !!state.layers[k];
   inp.addEventListener('change', () => { state.layers[k] = inp.checked; store.set('layers', state.layers); applyLayer(k, inp.checked); });
 });
+// The address bar is rewritten in place, never pushed, so the back button still leaves
+// the app instead of walking back through every pan and zoom.
+let hashTimer = 0;
+function syncHash(now = false) {
+  clearTimeout(hashTimer);
+  const write = () => {
+    const c = map.getCenter();
+    const hash = buildView({
+      zoom: map.getZoom(),
+      center: { lat: c.lat, lon: normLon(c.lng) },
+      model: state.model,
+      field: state.field,
+      units: state.units,
+      time: state.times[state.t],
+      point: state.point
+    });
+    // A page opened straight off the disk has an opaque origin and refuses this.
+    try { history.replaceState(null, '', hash || location.pathname + location.search); }
+    catch { /* the app works fine, the link just cannot be updated */ }
+  };
+  if (now) write(); else hashTimer = setTimeout(write, 300);
+}
+
+$('#share').addEventListener('click', async () => {
+  syncHash(true);
+  const url = location.href;
+  if (navigator.share) {
+    try { await navigator.share({ title: 'Isobar', url }); return; }
+    catch (e) { if (e && e.name === 'AbortError') return; }
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    setStatus('Link copied. It opens on this spot, model, field and hour.');
+  } catch {
+    setStatus('Copy the address bar to share this view.', 'error');
+  }
+});
+
 const syncUnits = () => $$('#units button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.units === state.units)));
 
 /** Switching units redraws what is on screen. Nothing is refetched. */
@@ -2464,6 +2588,7 @@ function setUnits(u) {
   state.units = u;
   store.set('units', u);
   syncUnits();
+  syncHash();
   renderLegend();
   updatePointReadout();
   if (!state.point) return;
@@ -2500,6 +2625,7 @@ window.addEventListener('resize', () => drawDayTicks());
 map.on('moveend', () => {
   const c = map.getCenter();
   store.set('view', { c: [+c.lat.toFixed(3), +c.lng.toFixed(3)], z: map.getZoom() });
+  syncHash();
   clearTimeout(moveTimer);
   moveTimer = setTimeout(() => { if (!gridCovers(state.grid)) loadGrid(); }, 650);
   if (!$('#boardsPanel').hidden) { if (state.ctab === 'live') renderLiveList(); else if (!boardsPt) renderBoards(); }
@@ -2528,6 +2654,8 @@ renderChips();
 renderLegend();
 loadGrid();
 for (const k of ['radar', 'alerts', 'sat', 'mrms', 'chasers']) if (state.layers[k]) applyLayer(k, true);
+if (shared.point) openPoint(L.latLng(shared.point.lat, shared.point.lon));
+syncHash(true);
 })();
 
 </script>

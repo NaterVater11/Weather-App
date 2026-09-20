@@ -41,6 +41,8 @@ Map fields: temperature, future radar (HRRR only), hourly precipitation, total p
 
 **Regional forums:** the nine regional boards on americanwx.com. The board covering the map center, or the spot you tapped, is shown first. Split areas show both boards, for example southern Virginia (Southeastern States and Mid Atlantic) or southern Kentucky (Tennessee Valley and Lakes/Ohio Valley). Boards open in a new tab.
 
+**Shareable links.** The address bar always holds the current view -- where, which model and field, which hour, which spot, which units -- so copying it shares exactly what you were looking at. The share button copies it, or opens the system share sheet on a phone. Opening a link restores all of it; because forecast runs change, the hour is carried as a valid time and matched to the nearest frame available.
+
 **Units.** US or metric, in the Layers panel: °F/°C, mph/km-h, inches/mm, snow in inches or cm. Everything is fetched and coloured in US units and converted once on the way to the screen, so switching never refetches a grid or changes the map itself. The Skew-T and the hodograph keep their own conventions -- Celsius, knots and metres per second -- because those are what the charts are read in.
 
 **Also:** place search, saved places (the star in the point panel; an empty search box lists them), a "my location" button, a hover readout on desktop, and keyboard shortcuts (space to play or pause, left and right arrows to step, Esc to close panels). Model, field, units, opacity, detail level, layers, map view, saved places, the open point-panel tab and hidden chart lines are remembered in the browser. The map reloads data every 20 minutes when it isn't playing.
@@ -203,6 +205,7 @@ The app lives in `isobar.html`: CSS in `<style>`, markup, then one script wrappe
 | Nowcast, air quality | `nowcast`, `aqiBand`, `dominantPollutant` |
 | Conditions tab | `WMO` codes, `reverseName`, `loadNow` |
 | Units | `QUANTITY`, `quantity`, `unitLabel`, `toDisplay`, `fmtQty`, `setUnits` |
+| Shareable view | `parseView`, `buildView`, `nearestTimeIndex`, `syncHash`, `owns` |
 | Saved places | `placeKey`, `addPlace`, `removePlace`, `hasPlace`, `renderSaved` |
 | Search and location | Geocoding and geolocation |
 | Wiring | Event listeners, keyboard, refresh timers |
@@ -232,7 +235,7 @@ To add a model, add an entry to `MODELS` with `key`, `name`, `ids` (fallback ord
 
 ```sh
 npm install   # test-only dependencies; the app itself still has none
-npm test      # 171 tests, no browser, about a second
+npm test      # 191 tests, no browser, about a second
 npm run mutate
 ```
 
@@ -263,6 +266,12 @@ storm motion, which is why supercells form on straight hodographs at all. Bunker
 is checked for its 7.5 m/s deviation and for deviating to the *right* of the shear
 vector. The nowcast, the AQI bands and saved places are covered too.
 
+`test/view.test.mjs` covers the shareable view. A hash arrives from whoever sent the
+link, so `parseView` is an input boundary and is tested for what it refuses as much as
+for what it accepts: unknown models and fields, coordinates outside the world, unbounded
+zoom and time, junk, markup and prototype keys. Two real bugs came out of writing it,
+both noted below.
+
 `test/boards.test.mjs` runs `boardsFor` against **66 real cities** using the same
 `us-atlas` states file the app fetches, covering every rule in the table: all nine split
 states in both directions, the territories, open water, and the pre-atlas cold start.
@@ -287,7 +296,7 @@ handled by `showTab`, and every host the app fetches from is on the key-free lis
 
 `npm run mutate` breaks the app on purpose, one edit at a time, and checks that a test
 fails each time -- an inverted helicity sign, a shifted state boundary, a dropped guard,
-a leaked contact field. **All 36 mutations are currently caught.** The harness refuses a
+a leaked contact field. **All 42 mutations are currently caught.** The harness refuses a
 mutation whose pattern is missing or whose edit changes nothing, because a no-op
 mutation "passes" for the wrong reason and silently overstates the coverage. It backs
 the originals up outside the tree, so an interrupted run cannot leave the repo mutated.
@@ -307,6 +316,14 @@ service formats its responses.
 - Keep it one self-contained file with no framework, no build step and no keys. That's what makes it drop-in hostable anywhere, including Home Assistant.
 - Keep the global `[hidden]{display:none!important}` rule. Without it, component `display` rules override the `hidden` attribute and panels or spinners never disappear.
 - Never name a local variable `L`; that's Leaflet.
+- Look up a key from outside with `owns(table, key)`, never `table[key]`. A plain lookup
+  lets `__proto__`, `constructor` and `toString` through as truthy, so a link ending
+  `#m=__proto__` would make the app treat `Object.prototype` as a model and render
+  nothing. This bit `parseView` and the remembered settings; a test pins both.
+- Splitting a pair on a comma needs an emptiness check. `','.split(',')` gives two empty
+  strings, `Number('')` is 0, and the view quietly lands on Null Island.
+- The address bar is rewritten with `replaceState`, never `pushState`, so the back
+  button still leaves the app instead of walking back through every pan and zoom.
 - Borders and isobars need separate canvas renderers.
 - Bump `loadSeq` on cache hits too, so an older in-flight request can't overwrite a newer model.
 - Model-data errors outrank warning-feed errors in the status pill. Don't let a minor failure hide a major one.
