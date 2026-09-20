@@ -329,6 +329,12 @@ h3.sub{font-family:var(--cond);font-weight:700;font-size:18px;margin:18px 0 6px}
     <p class="group-title">On top of any model field</p>
     <label class="toggle"><span><b>Pressure lines</b><small>Isobars every 4 mb with highs and lows</small></span><input type="checkbox" data-layer="isobars"><span class="sw"></span></label>
     <label class="toggle"><span><b>Wind barbs</b><small>10 m wind in knots</small></span><input type="checkbox" data-layer="barbs"><span class="sw"></span></label>
+    <p class="group-title">Units</p>
+    <div class="seg" id="units" role="group" aria-label="Units">
+      <button data-units="us" aria-pressed="false">°F, mph, in</button>
+      <button data-units="metric" aria-pressed="false">°C, km/h, mm</button>
+    </div>
+    <p class="fine">Units change what you read, not what is fetched. The map colours stay on the same scale either way. Soundings and the hodograph keep their own conventions: Celsius, knots and metres per second.</p>
     <p class="group-title">Map detail</p>
     <div class="seg" id="detail" role="group" aria-label="Map detail">
       <button data-detail="low" aria-pressed="false">Light</button>
@@ -447,19 +453,35 @@ const SCALES = {
     { labels: [970, 1000, 1014, 1028] })
 };
 
-const round = v => Math.round(v);
+// Everything is fetched, cached and coloured in US units. Conversion happens once on
+// the way to the screen, so switching systems never refetches a grid, never rebuilds a
+// colour scale, and never changes the map itself -- only the numbers people read.
+// Each entry is [label, from US units, decimal places].
+const QUANTITY = {
+  temp: { us: ['\u00b0F', v => v, 0], metric: ['\u00b0C', v => (v - 32) * 5 / 9, 0] },
+  speed: { us: ['mph', v => v, 0], metric: ['km/h', v => v * 1.609344, 0] },
+  rate: { us: ['in/hr', v => v, 2], metric: ['mm/hr', v => v * 25.4, 1] },
+  depth: { us: ['in', v => v, 2], metric: ['mm', v => v * 25.4, 1] },
+  snow: { us: ['in', v => v, 1], metric: ['cm', v => v * 2.54, 1] },
+  energy: { us: ['J/kg', v => v, 0], metric: ['J/kg', v => v, 0] },
+  ratio: { us: ['%', v => v, 0], metric: ['%', v => v, 0] },
+  press: { us: ['mb', v => v, 0], metric: ['hPa', v => v, 0] }
+};
+const UNIT_SYSTEMS = ['us', 'metric'];
+const KT2MPH = 1.150779;
+
 const FIELDS = [
-  { key: 'temp', name: 'Temperature', chip: 'Temp', v: 'temperature_2m', unit: '°F', scale: 'temp', fmt: v => `${round(v)}°F` },
-  { key: 'refl', name: 'Future radar', chip: 'Future radar', only: ['hrrr'], unit: '' },
-  { key: 'precip1', name: 'Hourly precip', chip: 'Hourly precip', v: 'precipitation', unit: 'in/hr', scale: 'rate', fmt: v => `${v.toFixed(2)} in` },
-  { key: 'precipTot', name: 'Total precip', chip: 'Total precip', v: 'precipitation', accum: true, unit: 'in', scale: 'ptot', fmt: v => `${v.toFixed(2)} in` },
-  { key: 'snowTot', name: 'Total snow', chip: 'Total snow', v: 'snowfall', accum: true, unit: 'in', scale: 'snow', fmt: v => `${v.toFixed(1)} in` },
-  { key: 'wind', name: 'Wind', chip: 'Wind', v: 'wind_speed_10m', unit: 'mph', scale: 'wind', barbs: true, fmt: v => `${round(v)} mph` },
-  { key: 'gust', name: 'Wind gusts', chip: 'Gusts', v: 'wind_gusts_10m', unit: 'mph', scale: 'wind', fmt: v => `${round(v)} mph` },
-  { key: 'dew', name: 'Dew point', chip: 'Dew point', v: 'dew_point_2m', unit: '°F', scale: 'dew', fmt: v => `${round(v)}°F` },
-  { key: 'cape', name: 'CAPE', chip: 'CAPE', v: 'cape', unit: 'J/kg', scale: 'cape', fmt: v => `${round(v)} J/kg` },
-  { key: 'cloud', name: 'Cloud cover', chip: 'Clouds', v: 'cloud_cover', unit: '%', scale: 'cloud', fmt: v => `${round(v)}%` },
-  { key: 'mslp', name: 'Sea-level pressure', chip: 'Pressure', v: 'pressure_msl', unit: 'mb', scale: 'mslp', isobars: true, fmt: v => `${round(v)} mb` }
+  { key: 'temp', name: 'Temperature', chip: 'Temp', v: 'temperature_2m', kind: 'temp', scale: 'temp' },
+  { key: 'refl', name: 'Future radar', chip: 'Future radar', only: ['hrrr'] },
+  { key: 'precip1', name: 'Hourly precip', chip: 'Hourly precip', v: 'precipitation', kind: 'rate', scale: 'rate' },
+  { key: 'precipTot', name: 'Total precip', chip: 'Total precip', v: 'precipitation', accum: true, kind: 'depth', scale: 'ptot' },
+  { key: 'snowTot', name: 'Total snow', chip: 'Total snow', v: 'snowfall', accum: true, kind: 'snow', scale: 'snow' },
+  { key: 'wind', name: 'Wind', chip: 'Wind', v: 'wind_speed_10m', kind: 'speed', scale: 'wind', barbs: true },
+  { key: 'gust', name: 'Wind gusts', chip: 'Gusts', v: 'wind_gusts_10m', kind: 'speed', scale: 'wind' },
+  { key: 'dew', name: 'Dew point', chip: 'Dew point', v: 'dew_point_2m', kind: 'temp', scale: 'dew' },
+  { key: 'cape', name: 'CAPE', chip: 'CAPE', v: 'cape', kind: 'energy', scale: 'cape' },
+  { key: 'cloud', name: 'Cloud cover', chip: 'Clouds', v: 'cloud_cover', kind: 'ratio', scale: 'cloud' },
+  { key: 'mslp', name: 'Sea-level pressure', chip: 'Pressure', v: 'pressure_msl', kind: 'press', scale: 'mslp', isobars: true }
 ];
 const FIELD = Object.fromEntries(FIELDS.map(f => [f.key, f]));
 const DETAIL = { low: 110, med: 190, high: 320 };
@@ -481,12 +503,26 @@ const state = {
   point: null,
   tab: ['now', 'compare', 'sounding'].includes(store.get('tab')) ? store.get('tab') : 'now',
   saved: store.get('saved', []),
+  units: UNIT_SYSTEMS.includes(store.get('units')) ? store.get('units') : 'us',
   hidden: new Set(store.get('hiddenModels', [])),
   compare: null
 };
 if (FIELD[state.field].only && !FIELD[state.field].only.includes(state.model)) state.field = 'temp';
 const model = () => MODEL[state.model];
 const field = () => FIELD[state.field];
+
+const quantity = kind => QUANTITY[kind][state.units];
+const unitLabel = kind => kind ? quantity(kind)[0] : '';
+const toDisplay = (kind, v) => quantity(kind)[1](v);
+/** A number in the reader's units. Degrees and percentages close up; the rest take a space. */
+function fmtQty(kind, v, withUnit = true) {
+  if (!kind || v == null || isNaN(v)) return '\u2013';
+  const [unit, to, dp] = quantity(kind);
+  const n = to(v);
+  const text = dp ? n.toFixed(dp) : String(Math.round(n));
+  if (!withUnit) return text;
+  return /^[\u00b0%]/.test(unit) ? `${text}${unit}` : `${text} ${unit}`;
+}
 
 /* ------------------------------------------------------------------ */
 /* Map                                                                 */
@@ -1115,12 +1151,16 @@ function renderLegend() {
   const sc = SCALES[f.scale], n = sc.stops.length;
   const grad = sc.stops.map(([, c], i) => `rgba(${c[0]},${c[1]},${c[2]},${Math.max(c[3], 0.35)}) ${(i / (n - 1) * 100).toFixed(1)}%`).join(',');
   const labels = sc.labels || sc.stops.map(s => s[0]);
-  const fmt = v => (Math.abs(v) < 1 && v !== 0) ? String(v).replace(/^0/, '') : String(v);
+  // Scale stops are in US units; the tick text is not.
+  const fmt = raw => {
+    const v = toDisplay(f.kind, raw);
+    return (Math.abs(v) < 1 && v !== 0) ? String(+v.toFixed(2)).replace(/^(-?)0/, '$1') : String(Math.round(v));
+  };
   const lbl = labels.map(v => {
     const i = sc.stops.findIndex(s => s[0] === v);
     return i < 0 ? '' : `<span style="left:${(i / (n - 1) * 100).toFixed(1)}%">${fmt(v)}</span>`;
   }).join('');
-  el.innerHTML = `<span class="ttl">${esc(f.name)}, ${esc(f.unit)}</span><div class="bar" style="background:linear-gradient(90deg,${grad})"></div><div class="lbls">${lbl}</div>`;
+  el.innerHTML = `<span class="ttl">${esc(f.name)}, ${esc(unitLabel(f.kind))}</span><div class="bar" style="background:linear-gradient(90deg,${grad})"></div><div class="lbls">${lbl}</div>`;
 }
 
 function renderChips() {
@@ -1184,8 +1224,8 @@ if (matchMedia('(pointer: fine)').matches) {
   const hov = $('#hover');
   map.on('mousemove', e => {
     const v = valueAt(e.latlng), f = field();
-    if (isNaN(v) || !f.fmt) { hov.hidden = true; return; }
-    hov.textContent = f.fmt(v);
+    if (isNaN(v) || !f.kind) { hov.hidden = true; return; }
+    hov.textContent = fmtQty(f.kind, v);
     hov.style.left = e.originalEvent.clientX + 'px';
     hov.style.top = e.originalEvent.clientY + 'px';
     hov.hidden = false;
@@ -1563,7 +1603,7 @@ function updatePointReadout() {
   if (!state.point) return;
   const f = field(), t = state.times[state.t];
   const v = valueAt(L.latLng(state.point.lat, state.point.lon));
-  $('#ptSub').textContent = (f.fmt && !isNaN(v) && t != null) ? `${model().name} ${f.name.toLowerCase()} ${fmtValid(t)}: ${f.fmt(v)}` : `${model().name}, ${t != null ? fmtValid(t) : ''}`;
+  $('#ptSub').textContent = (f.kind && !isNaN(v) && t != null) ? `${model().name} ${f.name.toLowerCase()} ${fmtValid(t)}: ${fmtQty(f.kind, v)}` : `${model().name}, ${t != null ? fmtValid(t) : ''}`;
 }
 
 function showTab(tab) {
@@ -1627,13 +1667,16 @@ function niceTicks(lo, hi, n = 4) {
   return out;
 }
 
-function chartSVG({ title, key, fmt, floor0, minSpan = 0 }) {
+function chartSVG({ title, key, fmt, floor0, minSpan = 0, conv = v => v }) {
   const c = state.compare, series = c.rows.filter(r => r.s && !state.hidden.has(r.m.key));
   let lo = Infinity, hi = -Infinity, span = 0;
-  for (const r of series) r.s[key].forEach((v, i) => { if (!isNaN(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); span = Math.max(span, i); } });
+  for (const r of series) r.s[key].forEach((raw, i) => { const v = conv(raw); if (!isNaN(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); span = Math.max(span, i); } });
   if (!isFinite(lo)) return '';
   if (floor0) lo = 0;
-  if (hi - lo < minSpan) hi = lo + minSpan;
+  // minSpan arrives in US units. Convert it as a difference, so the offset in a
+  // temperature conversion does not turn a 10-degree floor into a 250-degree one.
+  const zero = conv(0), minSpanD = Math.abs(conv(minSpan) - zero);
+  if (hi - lo < minSpanD) hi = lo + minSpanD;
   const ticks = niceTicks(lo, hi);
   lo = ticks[0]; hi = ticks[ticks.length - 1];
   const N = Math.max(48, span + 1), W = 380, H = 150, pl = 34, pr = 6, pt = 6, pb = 20, w = W - pl - pr, h = H - pt - pb;
@@ -1650,7 +1693,8 @@ function chartSVG({ title, key, fmt, floor0, minSpan = 0 }) {
   g += '<line class="mk" x1="0" x2="0" y1="0" y2="0" data-mark/>';
   for (const r of series) {
     let d = '', pen = false;
-    r.s[key].forEach((v, i) => {
+    r.s[key].forEach((raw, i) => {
+      const v = conv(raw);
       if (i >= N) return;
       if (isNaN(v)) { pen = false; return; }
       d += `${pen ? 'L' : 'M'}${X(i).toFixed(1)} ${Y(v).toFixed(1)}`; pen = true;
@@ -1681,21 +1725,21 @@ function drawCompare() {
   if (!ok.length) { box.innerHTML = '<p class="empty">No model returned data here. Check your connection and tap the map again.</p>'; return; }
   const anySnow = ok.some(r => r.snow >= 0.1);
   const keys = c.rows.filter(r => r.s).map(r => `<button class="key" data-key="${r.m.key}" aria-pressed="${!state.hidden.has(r.m.key)}"><i style="background:${r.m.color}"></i>${esc(r.m.name)}</button>`).join('');
-  const f1 = v => isNaN(v) ? '–' : v.toFixed(2), f0 = v => isNaN(v) ? '–' : Math.round(v);
+  const q = (kind, v) => fmtQty(kind, v, false);
   const body = c.rows.map(r => {
     const name = `<i style="background:${r.m.color}"></i>${esc(r.m.name)}`;
     if (!r.s) return `<tr><td>${name}</td><td colspan="${anySnow ? 5 : 4}" style="text-align:left;color:var(--muted)">${r.err ? 'Unavailable right now' : 'No data here'}</td></tr>`;
     const range = r.hours < 200 ? `<small>${r.hours} h</small>` : '';
-    return `<tr><td>${name}${range}</td><td>${f1(r.precip)}</td>${anySnow ? `<td>${r.snow.toFixed(1)}</td>` : ''}<td>${f0(r.hi)}°</td><td>${f0(r.lo)}°</td><td>${f0(r.gust)}</td></tr>`;
+    return `<tr><td>${name}${range}</td><td>${q('depth', r.precip)}</td>${anySnow ? `<td>${q('snow', r.snow)}</td>` : ''}<td>${q('temp', r.hi)}°</td><td>${q('temp', r.lo)}°</td><td>${q('speed', r.gust)}</td></tr>`;
   }).join('');
   box.innerHTML = `
     <div class="keys" role="group" aria-label="Show or hide models">${keys}</div>
-    <table class="sum"><thead><tr><th>Model</th><th>Precip in</th>${anySnow ? '<th>Snow in</th>' : ''}<th>High</th><th>Low</th><th>Gust mph</th></tr></thead><tbody>${body}</tbody></table>
+    <table class="sum"><thead><tr><th>Model</th><th>Precip ${esc(unitLabel('depth'))}</th>${anySnow ? `<th>Snow ${esc(unitLabel('snow'))}</th>` : ''}<th>High</th><th>Low</th><th>Gust ${esc(unitLabel('speed'))}</th></tr></thead><tbody>${body}</tbody></table>
     <p class="fine">Totals and extremes cover each model's full run: up to 10 days, shorter where noted.</p>
-    ${chartSVG({ title: 'Temperature, °F', key: 'temp', fmt: v => Math.round(v), minSpan: 10 })}
-    ${chartSVG({ title: 'Total precipitation, inches', key: 'ptot', fmt: v => v === 0 ? '0' : v < 1 ? v.toFixed(2).replace(/^0/, '') : String(+v.toFixed(1)), floor0: true, minSpan: 0.25 })}
-    ${anySnow ? chartSVG({ title: 'Total snow, inches', key: 'stot', fmt: v => v === 0 ? '0' : String(+v.toFixed(1)), floor0: true, minSpan: 1 }) : ''}
-    ${chartSVG({ title: 'Wind gusts, mph', key: 'gust', fmt: v => Math.round(v), floor0: true, minSpan: 20 })}
+    ${chartSVG({ title: `Temperature, ${unitLabel('temp')}`, key: 'temp', fmt: v => Math.round(v), minSpan: 10, conv: v => toDisplay('temp', v) })}
+    ${chartSVG({ title: `Total precipitation, ${unitLabel('depth')}`, key: 'ptot', fmt: v => v === 0 ? '0' : v < 1 ? v.toFixed(2).replace(/^0/, '') : String(+v.toFixed(1)), floor0: true, minSpan: 0.25, conv: v => toDisplay('depth', v) })}
+    ${anySnow ? chartSVG({ title: `Total snow, ${unitLabel('snow')}`, key: 'stot', fmt: v => v === 0 ? '0' : String(+v.toFixed(1)), floor0: true, minSpan: 1, conv: v => toDisplay('snow', v) }) : ''}
+    ${chartSVG({ title: `Wind gusts, ${unitLabel('speed')}`, key: 'gust', fmt: v => Math.round(v), floor0: true, minSpan: 20, conv: v => toDisplay('speed', v) })}
     <p class="fine">Tap a model name to hide or show its line. The white line marks the map time.</p>`;
   $$('#tabCompare .key').forEach(b => b.addEventListener('click', () => {
     const k = b.dataset.key;
@@ -1754,9 +1798,9 @@ async function loadSounding() {
     const cToF = c => c * 9 / 5 + 32;
     box.innerHTML = nav + `
       <div class="stats">
-        <div><span>Surface</span><b>${Math.round(cToF(sfc.t))}°/${isNaN(sfc.td) ? '–' : Math.round(cToF(sfc.td))}°</b></div>
+        <div><span>Surface</span><b>${fmtQty('temp', cToF(sfc.t), false)}°/${isNaN(sfc.td) ? '–' : fmtQty('temp', cToF(sfc.td), false)}°</b></div>
         <div><span>CAPE</span><b>${isNaN(cape) ? '–' : Math.round(cape)}</b></div>
-        <div><span>Precip. water</span><b>${isNaN(pw) ? '–' : (pw / 25.4).toFixed(2) + '"'}</b></div>
+        <div><span>Precip. water</span><b>${fmtQty('depth', isNaN(pw) ? NaN : pw / 25.4)}</b></div>
         <div><span>Cloud base</span><b>${parcel ? Math.round(parcel.pl) + ' mb' : '–'}</b></div>
       </div>
       ${skewTSVG(prof, parcel)}
@@ -2191,7 +2235,10 @@ const WMO = {
 const wmoText = c => WMO[c] || (Number.isFinite(c) ? 'Unsettled' : '');
 
 const cToF = c => c * 9 / 5 + 32;
-const fmtTemp = c => Number.isFinite(c) ? `${Math.round(cToF(c))}°` : '–';
+// The conditions endpoint answers in Celsius and knots; both pass through US units on
+// the way to whatever the reader picked.
+const fmtTemp = c => Number.isFinite(c) ? `${fmtQty('temp', cToF(c), false)}°` : '–';
+const fmtSpeedKt = kt => fmtQty('speed', Number.isFinite(kt) ? kt * KT2MPH : NaN);
 const fmtClock = d => d ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '–';
 const fmtDur = ms => `${Math.floor(ms / 3600000)} h ${Math.round(ms % 3600000 / 60000)} m`;
 
@@ -2273,8 +2320,8 @@ async function loadNow() {
     </div>
     ${cast ? `<p class="nowcast${cast.raining ? ' wet' : ''}">${esc(cast.text)}</p>` : ''}
     <div class="stats">
-      <div><span>Wind</span><b>${Math.round(c.wind_speed_10m)} kt</b></div>
-      <div><span>Gusts</span><b>${Math.round(c.wind_gusts_10m)} kt</b></div>
+      <div><span>Wind</span><b>${fmtSpeedKt(c.wind_speed_10m)}</b></div>
+      <div><span>Gusts</span><b>${fmtSpeedKt(c.wind_gusts_10m)}</b></div>
       <div><span>Humidity</span><b>${Math.round(c.relative_humidity_2m)}%</b></div>
       <div><span>UV index</span><b>${Number.isFinite(c.uv_index) ? Math.round(c.uv_index) : '–'}</b></div>
       ${band ? `<div><span>Air quality${worst ? ' · ' + esc(worst.label) : ''}</span><b style="color:${band.color}">${Math.round(aqi)} ${esc(band.name)}</b></div>` : ''}
@@ -2409,6 +2456,26 @@ $$('[data-layer]').forEach(inp => {
   inp.checked = !!state.layers[k];
   inp.addEventListener('change', () => { state.layers[k] = inp.checked; store.set('layers', state.layers); applyLayer(k, inp.checked); });
 });
+const syncUnits = () => $$('#units button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.units === state.units)));
+
+/** Switching units redraws what is on screen. Nothing is refetched. */
+function setUnits(u) {
+  if (!UNIT_SYSTEMS.includes(u) || u === state.units) return;
+  state.units = u;
+  store.set('units', u);
+  syncUnits();
+  renderLegend();
+  updatePointReadout();
+  if (!state.point) return;
+  if (state.tab === 'compare' && state.compare) drawCompare();
+  else if (state.tab === 'now') { nowKey = ''; loadNow(); }
+  else if (state.tab === 'sounding') { soundingKey = ''; loadSounding(); }
+}
+$('#units').addEventListener('click', e => {
+  const b = e.target.closest('[data-units]');
+  if (b) setUnits(b.dataset.units);
+});
+
 const syncDetail = () => $$('#detail button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.detail === state.detail)));
 $('#detail').addEventListener('click', e => {
   const b = e.target.closest('[data-detail]');
@@ -2456,6 +2523,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && st
 
 /* boot */
 syncDetail();
+syncUnits();
 renderChips();
 renderLegend();
 loadGrid();

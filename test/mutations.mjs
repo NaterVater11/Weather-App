@@ -80,6 +80,21 @@ const MUTATIONS = [
   ['places: stop deduping', APP, 'test/derived.test.mjs',
     '.concat(list.filter(p => placeKey(p.lat, p.lon) !== key))', '.concat(list)'],
   ['places: ignore the cap', APP, 'test/derived.test.mjs', '    .slice(0, max);', '    .slice(0, 9999);'],
+  // --- units ---
+  // Patterns here avoid the degree sign: the app writes it as a \\u00b0 escape, so a
+  // literal character would silently fail to match and the mutation would be skipped.
+  ['units: temperature conversion inverted', APP, 'test/pure.test.mjs',
+    'v => (v - 32) * 5 / 9, 0]', 'v => (v - 32) * 9 / 5, 0]'],
+  ['units: wrong mph to km/h factor', APP, 'test/pure.test.mjs',
+    "['km/h', v => v * 1.609344, 0]", "['km/h', v => v * 1.60934, 0]"],
+  ['units: snow reported in mm instead of cm', APP, 'test/pure.test.mjs',
+    "['cm', v => v * 2.54, 1]", "['mm', v => v * 25.4, 1]"],
+  ['units: a missing value renders as NaN', APP, 'test/pure.test.mjs',
+    "  if (!kind || v == null || isNaN(v)) return '\\u2013';", '  if (false) return \'-\';'],
+  ['units: a field points at a kind that does not exist', APP, 'test/pure.test.mjs',
+    "v: 'wind_gusts_10m', kind: 'speed'", "v: 'wind_gusts_10m', kind: 'velocity'"],
+  ['units: chart span converted as a value, not a difference', APP, 'test/pure.test.mjs',
+    'const zero = conv(0), minSpanD = Math.abs(conv(minSpan) - zero);', 'const minSpanD = minSpan;'],
   // --- the companion server's privacy boundary ---
   ['relay: let any URL scheme through', RELAY, 'test/relay.test.mjs',
     '/^https?:\\/\\/\\S+$/i.test(kv[2])', 'true'],

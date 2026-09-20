@@ -41,7 +41,9 @@ Map fields: temperature, future radar (HRRR only), hourly precipitation, total p
 
 **Regional forums:** the nine regional boards on americanwx.com. The board covering the map center, or the spot you tapped, is shown first. Split areas show both boards, for example southern Virginia (Southeastern States and Mid Atlantic) or southern Kentucky (Tennessee Valley and Lakes/Ohio Valley). Boards open in a new tab.
 
-**Also:** place search, saved places (the star in the point panel; an empty search box lists them), a "my location" button, a hover readout on desktop, and keyboard shortcuts (space to play or pause, left and right arrows to step, Esc to close panels). Model, field, opacity, detail level, layers, map view, saved places, the open point-panel tab and hidden chart lines are remembered in the browser. The map reloads data every 20 minutes when it isn't playing.
+**Units.** US or metric, in the Layers panel: °F/°C, mph/km-h, inches/mm, snow in inches or cm. Everything is fetched and coloured in US units and converted once on the way to the screen, so switching never refetches a grid or changes the map itself. The Skew-T and the hodograph keep their own conventions -- Celsius, knots and metres per second -- because those are what the charts are read in.
+
+**Also:** place search, saved places (the star in the point panel; an empty search box lists them), a "my location" button, a hover readout on desktop, and keyboard shortcuts (space to play or pause, left and right arrows to step, Esc to close panels). Model, field, units, opacity, detail level, layers, map view, saved places, the open point-panel tab and hidden chart lines are remembered in the browser. The map reloads data every 20 minutes when it isn't playing.
 
 ## Running it
 
@@ -200,6 +202,7 @@ The app lives in `isobar.html`: CSS in `<style>`, markup, then one script wrappe
 | Hodograph | `windProfile`, `windAt`, `bulkShear`, `meanWind`, `bunkersMotion`, `stormRelativeHelicity`, `severeParams`, `hodographSVG` |
 | Nowcast, air quality | `nowcast`, `aqiBand`, `dominantPollutant` |
 | Conditions tab | `WMO` codes, `reverseName`, `loadNow` |
+| Units | `QUANTITY`, `quantity`, `unitLabel`, `toDisplay`, `fmtQty`, `setUnits` |
 | Saved places | `placeKey`, `addPlace`, `removePlace`, `hasPlace`, `renderSaved` |
 | Search and location | Geocoding and geolocation |
 | Wiring | Event listeners, keyboard, refresh timers |
@@ -214,6 +217,9 @@ To add a model, add an entry to `MODELS` with `key`, `name`, `ids` (fallback ord
 - **Open-Meteo's free tier** is for non-commercial use only and capped at 10,000 calls per day (5,000 per hour, 600 per minute). Long or variable-heavy requests count as more than one call, and each map load asks for 110 to 320 locations. If Isobar says the free limit is used up, switch to Light detail. Using it for clients or in a paid product needs an Open-Meteo subscription.
 - **Compare totals** cover each model's full run, so HRRR's 48-hour total sits next to GFS's 10-day total. The note under the table says so.
 - **Place names are US only.** `api.weather.gov` names the nearest town for any US point; elsewhere a tapped spot keeps its coordinates, because no free worldwide reverse geocoder is in use.
+- **Units do not reach the Skew-T or the hodograph.** Those keep Celsius, knots and
+  metres per second, which is what the charts are read in everywhere else. Switching to
+  metric changes the map, the legend, the conditions tab and the comparison charts.
 - **Air quality is US AQI.** Open-Meteo also publishes a European index and pollen, which aren't shown.
 - **Hodograph parameters come from model wind at pressure levels,** interpolated to height, not from a native model sounding. They track the real values closely but are not a substitute for SPC mesoanalysis on a chase day.
 - **The nowcast looks six hours ahead** and is quarter-hourly, so it says when rain starts, not which street it hits first.
@@ -226,7 +232,7 @@ To add a model, add an entry to `MODELS` with `key`, `name`, `ids` (fallback ord
 
 ```sh
 npm install   # test-only dependencies; the app itself still has none
-npm test      # 154 tests, no browser, under a second
+npm test      # 171 tests, no browser, about a second
 npm run mutate
 ```
 
@@ -241,6 +247,11 @@ including saddles, NaN cells and accuracy against a linear ramp and a cone; bili
 interpolation and its nearest-neighbour fallback; the 3x upsample used before contouring
 isobars; LCL height and pseudo-adiabatic ascent, checked against the 125 m per degree
 rule of thumb and for step-size sensitivity; chart ticks, wind barbs and colour scales.
+
+`test/pure.test.mjs` also covers the unit system: that every field names a quantity
+that exists, that the metric conversions are the real ones, and that `chartSVG`
+converts a minimum span as a *difference* -- a 10 degree Fahrenheit floor is 5.6
+Celsius, and converting it as a value would stretch the axis to 250.
 
 `test/derived.test.mjs` covers everything the Now tab and the hodograph rest on. Sun
 times are pinned against published sunrise and sunset for New York and London and hold
@@ -276,7 +287,7 @@ handled by `showTab`, and every host the app fetches from is on the key-free lis
 
 `npm run mutate` breaks the app on purpose, one edit at a time, and checks that a test
 fails each time -- an inverted helicity sign, a shifted state boundary, a dropped guard,
-a leaked contact field. **All 30 mutations are currently caught.** The harness refuses a
+a leaked contact field. **All 36 mutations are currently caught.** The harness refuses a
 mutation whose pattern is missing or whose edit changes nothing, because a no-op
 mutation "passes" for the wrong reason and silently overstates the coverage. It backs
 the originals up outside the tree, so an interrupted run cannot leave the repo mutated.

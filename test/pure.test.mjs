@@ -394,3 +394,199 @@ test('miles: known city pairs come out right', () => {
   close(app.miles(41.88, -87.63, 39.74, -104.99), 920, 10, 'Chicago to Denver');
   assert.equal(app.miles(35, -97, 35, -97), 0);
 });
+
+/* ------------------------------------------------------------------ */
+/* Units                                                               */
+/* ------------------------------------------------------------------ */
+// The app fetches and colours in US units and converts on the way to the screen, so a
+// broken converter shows a wrong number over a correct map -- invisible without tests.
+
+const units = await load(['QUANTITY', 'UNIT_SYSTEMS', 'KT2MPH', 'FIELDS', 'FIELD', 'quantity', 'unitLabel', 'toDisplay', 'fmtQty'], {
+  prelude: "const state = { units: 'us' };\nconst setUnits = u => { state.units = u; };",
+  expose: ['setUnits', 'state']
+});
+const asUS = fn => { units.setUnits('us'); try { return fn(); } finally { units.setUnits('us'); } };
+const asMetric = fn => { units.setUnits('metric'); try { return fn(); } finally { units.setUnits('us'); } };
+
+test('QUANTITY: every kind covers every unit system', () => {
+  for (const [kind, systems] of Object.entries(units.QUANTITY)) {
+    for (const sys of units.UNIT_SYSTEMS) {
+      const entry = systems[sys];
+      assert.ok(Array.isArray(entry) && entry.length === 3, `${kind}.${sys} is malformed`);
+      const [label, to, dp] = entry;
+      assert.ok(typeof label === 'string' && label.length, `${kind}.${sys} has no label`);
+      assert.equal(typeof to, 'function', `${kind}.${sys} has no converter`);
+      assert.ok(Number.isInteger(dp) && dp >= 0, `${kind}.${sys} has bad precision`);
+    }
+  }
+});
+
+test('QUANTITY: US units are the identity, because they are what is stored', () => {
+  for (const [kind, systems] of Object.entries(units.QUANTITY)) {
+    for (const v of [-40, 0, 1, 33.3, 250]) {
+      assert.equal(systems.us[1](v), v, `${kind} should not convert in US units`);
+    }
+  }
+});
+
+test('QUANTITY: the metric conversions are the real ones', () => {
+  const t = units.QUANTITY.temp.metric[1];
+  close(t(32), 0, 1e-9, 'freezing');
+  close(t(212), 100, 1e-9, 'boiling');
+  close(t(-40), -40, 1e-9, 'where the scales cross');
+  close(units.QUANTITY.speed.metric[1](1), 1.609344, 1e-9, 'mph to km/h');
+  close(units.QUANTITY.depth.metric[1](1), 25.4, 1e-9, 'inch to mm');
+  close(units.QUANTITY.rate.metric[1](1), 25.4, 1e-9, 'in/hr to mm/hr');
+  close(units.QUANTITY.snow.metric[1](1), 2.54, 1e-9, 'inch to cm');
+  // Pressure and energy are the same number in both; only the label moves.
+  close(units.QUANTITY.press.metric[1](1013), 1013, 1e-9);
+  close(units.QUANTITY.energy.metric[1](2500), 2500, 1e-9);
+  assert.equal(units.QUANTITY.press.metric[0], 'hPa');
+  assert.equal(units.QUANTITY.press.us[0], 'mb');
+});
+
+test('KT2MPH: knots convert to mph correctly', () => {
+  close(units.KT2MPH, 1.150779, 1e-6);
+  close(50 * units.KT2MPH, 57.539, 0.01, '50 knots in mph');
+});
+
+test('FIELDS: every field names a kind and a scale that exist', () => {
+  // A typo here would render a legend with "undefined" on it, or throw on the hover.
+  for (const f of units.FIELDS) {
+    if (!f.v) continue; // the radar tile layer has no sampled value
+    assert.ok(f.kind, `${f.key} has no kind`);
+    assert.ok(units.QUANTITY[f.kind], `${f.key} has kind "${f.kind}", which is not a quantity`);
+    assert.ok(f.scale, `${f.key} has no colour scale`);
+  }
+});
+
+test('FIELDS: the lookup table matches the list', () => {
+  assert.deepEqual(Object.keys(units.FIELD).sort(), units.FIELDS.map(f => f.key).sort());
+});
+
+test('fmtQty: degrees and percentages close up, the rest take a space', () => {
+  asUS(() => {
+    assert.equal(units.fmtQty('temp', 72.4), '72°F');
+    assert.equal(units.fmtQty('ratio', 55), '55%');
+    assert.equal(units.fmtQty('speed', 12.6), '13 mph');
+    assert.equal(units.fmtQty('press', 1013.2), '1013 mb');
+    assert.equal(units.fmtQty('depth', 0.257), '0.26 in');
+  });
+});
+
+test('fmtQty: reads the current unit system', () => {
+  asUS(() => assert.equal(units.fmtQty('temp', 32), '32°F'));
+  asMetric(() => {
+    assert.equal(units.fmtQty('temp', 32), '0°C');
+    assert.equal(units.fmtQty('speed', 10), '16 km/h');
+    assert.equal(units.fmtQty('snow', 4), '10.2 cm');
+    assert.equal(units.fmtQty('press', 1013.2), '1013 hPa');
+  });
+});
+
+test('fmtQty: a missing value is a dash, never NaN on screen', () => {
+  for (const v of [NaN, null, undefined]) {
+    assert.equal(units.fmtQty('temp', v), '–', `${v} should render as a dash`);
+  }
+  assert.equal(units.fmtQty(null, 5), '–', 'a field with no kind has nothing to show');
+});
+
+test('fmtQty: can drop the unit for a column that carries it in the header', () => {
+  asUS(() => assert.equal(units.fmtQty('speed', 40), '40 mph'));
+  asUS(() => assert.equal(units.fmtQty('speed', 40, false), '40'));
+  asMetric(() => assert.equal(units.fmtQty('temp', 50, false), '10'));
+});
+
+test('unitLabel and toDisplay: agree with the table and with each other', () => {
+  asMetric(() => {
+    assert.equal(units.unitLabel('temp'), '°C');
+    close(units.toDisplay('temp', 212), 100, 1e-9);
+    assert.equal(units.unitLabel(null), '', 'a field with no kind has no unit');
+  });
+});
+
+test('toDisplay: converting a span is not the same as converting a value', () => {
+  // The chart floors its axis with a minimum span. Temperature has an offset, so the
+  // span has to be converted as a difference or a 10 degree floor becomes 250.
+  asMetric(() => {
+    const zero = units.toDisplay('temp', 0);
+    const span = Math.abs(units.toDisplay('temp', 10) - zero);
+    close(span, 10 * 5 / 9, 1e-9, '10 F of span is 5.6 C');
+    assert.ok(span < 10, 'a converted span must not inflate the axis');
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Comparison charts                                                   */
+/* ------------------------------------------------------------------ */
+// chartSVG is where the unit conversion meets the axis. A span floor converted as if
+// it were a value turns a 10-degree minimum into a 250-degree one, which looks like a
+// flat line on an absurd axis -- a rendering bug no unit test of the converters sees.
+
+const charts = await load(['niceTicks', 'esc', 'QUANTITY', 'quantity', 'toDisplay', 'chartSVG'], {
+  prelude: "const state = { units: 'us', hidden: new Set(), compare: null };\n"
+    + "const setUnits = u => { state.units = u; };\n"
+    + "const setCompare = c => { state.compare = c; };",
+  expose: ['setUnits', 'setCompare', 'state']
+});
+
+/** One model, one series, so the axis is entirely predictable. */
+function fakeCompare(values) {
+  const s = { temp: Float32Array.from(values) };
+  return { t0: Math.floor(Date.UTC(2026, 0, 1) / 1000), N: values.length,
+    rows: [{ m: { key: 'x', name: 'Model', color: '#4C8DFF' }, s }] };
+}
+const yTicks = svg => [...svg.matchAll(/class="yl"[^>]*>([^<]+)</g)].map(m => Number(m[1]));
+
+test('chartSVG: draws a labelled axis and one path per model', () => {
+  charts.setCompare(fakeCompare([40, 45, 50, 55, 60]));
+  const svg = charts.chartSVG({ title: 'Temperature', key: 'temp', fmt: v => Math.round(v), minSpan: 10 });
+  assert.match(svg, /<figure class="chart"/);
+  assert.equal((svg.match(/<path /g) || []).length, 1);
+  assert.ok(!svg.includes('NaN'), 'NaN reached the chart');
+  const ticks = yTicks(svg);
+  assert.ok(ticks.length >= 2, 'the axis needs ticks');
+  assert.ok(Math.min(...ticks) <= 40 && Math.max(...ticks) >= 60, 'the axis must contain the data');
+});
+
+test('chartSVG: the minimum span is honoured on a flat series', () => {
+  charts.setCompare(fakeCompare([50, 50, 50, 50]));
+  const svg = charts.chartSVG({ title: 'Temperature', key: 'temp', fmt: v => Math.round(v), minSpan: 10 });
+  const ticks = yTicks(svg);
+  close(Math.max(...ticks) - Math.min(...ticks), 10, 2.5, 'a flat series should still span the floor');
+});
+
+test('chartSVG: a converted span does not inflate the axis', () => {
+  // The whole point: 10 degrees Fahrenheit of floor is 5.6 Celsius, not 10.
+  charts.setCompare(fakeCompare([50, 50, 50, 50]));
+  const opts = { title: 'Temperature', key: 'temp', fmt: v => Math.round(v), minSpan: 10 };
+  const us = yTicks(charts.chartSVG({ ...opts, conv: v => charts.toDisplay('temp', v) }));
+  charts.setUnits('metric');
+  const metric = yTicks(charts.chartSVG({ ...opts, conv: v => charts.toDisplay('temp', v) }));
+  charts.setUnits('us');
+  const spanUS = Math.max(...us) - Math.min(...us);
+  const spanM = Math.max(...metric) - Math.min(...metric);
+  assert.ok(spanM < spanUS, `metric span ${spanM} should be smaller than ${spanUS}`);
+  assert.ok(spanM <= 8, `a 10 F floor must not become a ${spanM} C axis`);
+  // And the axis must still sit around the converted value, 10 C.
+  assert.ok(Math.min(...metric) <= 10 && Math.max(...metric) >= 10, 'the axis lost its data');
+});
+
+test('chartSVG: values are converted, not just the labels', () => {
+  charts.setCompare(fakeCompare([32, 122, 212]));
+  charts.setUnits('metric');
+  const svg = charts.chartSVG({ title: 'T', key: 'temp', fmt: v => Math.round(v), conv: v => charts.toDisplay('temp', v) });
+  charts.setUnits('us');
+  const ticks = yTicks(svg);
+  assert.ok(Math.min(...ticks) <= 0, 'freezing should be on the axis as 0');
+  assert.ok(Math.max(...ticks) >= 100, 'boiling should be on the axis as 100');
+});
+
+test('chartSVG: a hidden model is left out, and an empty chart is empty', () => {
+  charts.setCompare(fakeCompare([40, 50, 60]));
+  charts.state.hidden.add('x');
+  assert.equal(charts.chartSVG({ title: 'T', key: 'temp', fmt: v => v }), '', 'no visible series, no chart');
+  charts.state.hidden.delete('x');
+  charts.setCompare(fakeCompare([NaN, NaN]));
+  assert.equal(charts.chartSVG({ title: 'T', key: 'temp', fmt: v => v }), '', 'all-NaN series, no chart');
+});
