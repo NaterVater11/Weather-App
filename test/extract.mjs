@@ -77,20 +77,31 @@ export function cut(src, name) {
   if (!at) throw new Error(`extract: no top-level declaration named "${name}"`);
   const start = at.index;
 
-  let depth = 0, seen = false;
-  for (let i = start; i < masked.length; i++) {
+  const isFn = masked[start] === 'f';
+  let depth = 0, seen = false, end = -1;
+  for (let i = start; i < masked.length && end < 0; i++) {
     const c = masked[i];
     if (c === '{' || c === '(' || c === '[') { depth++; seen = true; }
     else if (c === '}' || c === ')' || c === ']') {
       depth--;
       if (depth < 0) throw new Error(`extract: unbalanced brackets reading "${name}"`);
-    } else if (c === ';' && depth === 0 && seen) return src.slice(start, i + 1);
-    if (seen && depth === 0 && c === '}') {
-      // A function declaration ends at its closing brace; a const ends at the semicolon.
-      if (masked[start] === 'f') return src.slice(start, i + 1);
+      // A function declaration ends at its closing brace; a const runs to its semicolon.
+      if (isFn && seen && depth === 0 && c === '}') end = i;
+    } else if (c === ';' && depth === 0 && !isFn) {
+      // Note: no `seen` guard here. `const X = 5;` contains no brackets at all, and
+      // requiring one made the cut run on into the next declaration.
+      end = i;
     }
   }
-  throw new Error(`extract: never found the end of "${name}"`);
+  if (end < 0) throw new Error(`extract: never found the end of "${name}"`);
+  const text = src.slice(start, end + 1);
+  // Overshooting is silent and poisonous -- it would redeclare whatever it swallowed,
+  // or quietly test the wrong function. Top-level declarations start at column 0, so
+  // a second one inside the cut means the scan ran past the end.
+  if (/\n(?:const|let|var|function|class)\s/.test(blank(text))) {
+    throw new Error(`extract: the cut for "${name}" ran past its own declaration`);
+  }
+  return text;
 }
 
 /**

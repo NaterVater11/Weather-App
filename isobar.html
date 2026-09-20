@@ -236,6 +236,35 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 .relay{display:flex;gap:8px}
 .relay input{flex:1;min-width:0;height:40px;border-radius:10px;border:1px solid var(--line);background:var(--ink);color:var(--text);padding:0 12px;font-size:16px}
 .relay input::placeholder{color:var(--muted)}
+
+/* Conditions tab */
+.now-head{display:flex;align-items:center;gap:12px;margin:2px 0 10px}
+.now-temp{font-family:var(--cond);font-weight:700;font-size:54px;line-height:.92;font-variant-numeric:tabular-nums}
+.now-meta{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.now-meta b{font-family:var(--cond);font-size:19px;font-weight:600}
+.now-meta span{font-size:12.5px;color:var(--muted)}
+.now-barb{flex:none;opacity:.9}
+.nowcast{margin:0 0 10px;padding:9px 11px;border-radius:9px;background:var(--ink);border-left:3px solid var(--line);font-weight:600;font-size:14px}
+.nowcast.wet{border-left-color:var(--cold)}
+.sunmoon{margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}
+.sunmoon .moon{display:flex;align-items:center;gap:10px}
+.sunmoon .moon b{display:block;font-family:var(--cond);font-size:17px;font-weight:600}
+.sunmoon .moon span{font-size:12.5px;color:var(--muted)}
+.sunmoon .fine{margin-top:7px}
+
+/* Hodograph */
+h3.sub{font-family:var(--cond);font-weight:700;font-size:18px;margin:18px 0 6px}
+.hodo-wrap{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
+.hodo{width:200px;height:200px;flex:none}
+.hodo-stats{flex:1;min-width:150px;grid-template-columns:1fr 1fr;margin:0}
+
+/* Saved places */
+.save-btn{margin-left:auto}
+.save-btn svg{fill:none}
+.save-btn.on svg{fill:#e8e05a;color:#e8e05a}
+.save-btn.on{color:#e8e05a}
+.sheet-head .save-btn+.icon-btn{margin-left:0}
+.results-head{padding:7px 12px 3px;font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
 </style>
 </head>
 <body>
@@ -319,14 +348,17 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 </aside>
 
 <aside class="sheet" id="pointPanel" hidden aria-label="Point forecast">
-  <div class="sheet-head"><div><h2 id="ptTitle">Point</h2><p id="ptSub"></p><a id="ptBoard" class="pt-board" target="_blank" rel="noopener" hidden></a></div><button class="icon-btn" data-close aria-label="Close point forecast">
+  <div class="sheet-head"><div><h2 id="ptTitle">Point</h2><p id="ptSub"></p><a id="ptBoard" class="pt-board" target="_blank" rel="noopener" hidden></a></div><button class="icon-btn save-btn" id="ptSave" aria-pressed="false" aria-label="Save this place">
+    <svg width="19" height="19" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.6l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.5 9.8l5.9-.9z"/></svg></button><button class="icon-btn" data-close aria-label="Close point forecast">
     <svg width="18" height="18" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2" fill="none" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
   <div class="tabs" role="tablist">
-    <button role="tab" id="tabBtnCompare" aria-selected="true" aria-controls="tabCompare" data-tab="compare">Compare models</button>
+    <button role="tab" id="tabBtnNow" aria-selected="true" aria-controls="tabNow" data-tab="now">Now</button>
+    <button role="tab" id="tabBtnCompare" aria-selected="false" aria-controls="tabCompare" data-tab="compare">Compare</button>
     <button role="tab" id="tabBtnSounding" aria-selected="false" aria-controls="tabSounding" data-tab="sounding">Sounding</button>
   </div>
   <div class="sheet-body">
-    <div id="tabCompare" role="tabpanel" aria-labelledby="tabBtnCompare"></div>
+    <div id="tabNow" role="tabpanel" aria-labelledby="tabBtnNow"></div>
+    <div id="tabCompare" role="tabpanel" aria-labelledby="tabBtnCompare" hidden></div>
     <div id="tabSounding" role="tabpanel" aria-labelledby="tabBtnSounding" hidden></div>
   </div>
 </aside>
@@ -447,7 +479,8 @@ const state = {
   t: 0,
   playing: false,
   point: null,
-  tab: 'compare',
+  tab: ['now', 'compare', 'sounding'].includes(store.get('tab')) ? store.get('tab') : 'now',
+  saved: store.get('saved', []),
   hidden: new Set(store.get('hiddenModels', [])),
   compare: null
 };
@@ -1520,6 +1553,9 @@ function openPoint(ll, name) {
   openSheet('pointPanel');
   state.compare = null;
   soundingKey = '';
+  nowKey = '';
+  syncSaveButton();
+  if (!name) nameSpot(state.point);
   showTab(state.tab);
 }
 
@@ -1532,11 +1568,14 @@ function updatePointReadout() {
 
 function showTab(tab) {
   state.tab = tab;
+  store.set('tab', tab);
   $$('#pointPanel .tabs [role=tab]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
+  $('#tabNow').hidden = tab !== 'now';
   $('#tabCompare').hidden = tab !== 'compare';
   $('#tabSounding').hidden = tab !== 'sounding';
   if (!state.point) return;
-  if (tab === 'compare') { if (!state.compare) loadCompare(); else drawCompare(); }
+  if (tab === 'now') loadNow();
+  else if (tab === 'compare') { if (!state.compare) loadCompare(); else drawCompare(); }
   else loadSounding();
 }
 $$('#pointPanel .tabs [role=tab]').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
@@ -1689,19 +1728,20 @@ async function loadSounding() {
   wireNav();
   const iso = new Date(t * 1000).toISOString().slice(0, 13) + ':00';
   const vars = ['temperature_2m', 'dew_point_2m', 'surface_pressure', 'wind_speed_10m', 'wind_direction_10m', 'cape', 'total_column_integrated_water_vapour'];
-  for (const lev of LEVELS) vars.push(`temperature_${lev}hPa`, `dew_point_${lev}hPa`, `wind_speed_${lev}hPa`, `wind_direction_${lev}hPa`);
+  for (const lev of LEVELS) vars.push(`temperature_${lev}hPa`, `dew_point_${lev}hPa`, `wind_speed_${lev}hPa`, `wind_direction_${lev}hPa`, `geopotential_height_${lev}hPa`);
   try {
     const j = await omFetch({ latitude: pt.lat.toFixed(3), longitude: pt.lon.toFixed(3), hourly: vars.join(','), start_hour: iso, end_hour: iso, timeformat: 'unixtime', wind_speed_unit: 'kn' }, m);
     if (soundingKey !== key) return;
     const h = j.hourly, at = k => (h[k] && h[k][0] != null) ? h[k][0] : NaN;
     const psfc = at('surface_pressure');
     const prof = [];
-    if (!isNaN(psfc) && !isNaN(at('temperature_2m'))) prof.push({ p: psfc, t: at('temperature_2m'), td: at('dew_point_2m'), ws: at('wind_speed_10m'), wd: at('wind_direction_10m') });
+    const ground = Number.isFinite(j.elevation) ? j.elevation : NaN;
+    if (!isNaN(psfc) && !isNaN(at('temperature_2m'))) prof.push({ p: psfc, t: at('temperature_2m'), td: at('dew_point_2m'), ws: at('wind_speed_10m'), wd: at('wind_direction_10m'), z: ground });
     for (const lev of LEVELS) {
       if (!isNaN(psfc) && lev >= psfc - 3) continue;
       const tt = at(`temperature_${lev}hPa`);
       if (isNaN(tt)) continue;
-      prof.push({ p: lev, t: tt, td: at(`dew_point_${lev}hPa`), ws: at(`wind_speed_${lev}hPa`), wd: at(`wind_direction_${lev}hPa`) });
+      prof.push({ p: lev, t: tt, td: at(`dew_point_${lev}hPa`), ws: at(`wind_speed_${lev}hPa`), wd: at(`wind_direction_${lev}hPa`), z: at(`geopotential_height_${lev}hPa`) });
     }
     if (prof.length < 4) {
       box.innerHTML = nav + `<p class="empty">${esc(m.name)} has no upper-air data for this spot and hour. GFS and Euro cover everywhere.</p>`;
@@ -1710,6 +1750,7 @@ async function loadSounding() {
     const sfc = prof[0];
     const parcel = (!isNaN(sfc.td) && sfc.p > 500) ? liftParcel(sfc.p, sfc.t, sfc.td) : null;
     const cape = at('cape'), pw = at('total_column_integrated_water_vapour');
+    const sp = severeParams(prof);
     const cToF = c => c * 9 / 5 + 32;
     box.innerHTML = nav + `
       <div class="stats">
@@ -1719,7 +1760,17 @@ async function loadSounding() {
         <div><span>Cloud base</span><b>${parcel ? Math.round(parcel.pl) + ' mb' : '–'}</b></div>
       </div>
       ${skewTSVG(prof, parcel)}
-      <p class="fine">Red is temperature, green is dew point, dashed is a surface parcel lifted to its cloud base and beyond. Barbs are wind in knots. CAPE (J/kg) comes straight from the model.</p>`;
+      <p class="fine">Red is temperature, green is dew point, dashed is a surface parcel lifted to its cloud base and beyond. Barbs are wind in knots. CAPE (J/kg) comes straight from the model.</p>
+      ${sp ? `<h3 class="sub">Hodograph</h3>
+      <div class="hodo-wrap">${hodographSVG(sp)}
+        <div class="stats hodo-stats">
+          <div><span>0\u20131 km shear</span><b>${fmtKt(sp.shear1)}</b></div>
+          <div><span>0\u20136 km shear</span><b>${fmtKt(sp.shear6)}</b></div>
+          <div><span>0\u20131 km SRH</span><b>${fmtSRH(sp.srh1)}</b></div>
+          <div><span>0\u20133 km SRH</span><b>${fmtSRH(sp.srh3)}</b></div>
+        </div>
+      </div>
+      <p class="fine">Rings are wind speed in m/s. The trace is coloured by height: red below 1 km, orange to 3 km, green to 6 km, blue above. The crosshair is the Bunkers right-mover storm motion, and storm-relative helicity is measured against it. Veering winds give a positive number.</p>` : ''}`;
     wireNav();
   } catch (e) {
     if (soundingKey !== key) return;
@@ -1790,6 +1841,505 @@ function skewTSVG(prof, parcel) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Sun and moon                                                        */
+/* ------------------------------------------------------------------ */
+// The sunrise equation (NOAA / Meeus, low precision). Accurate to well under a
+// minute, which is far tighter than any reason someone opens a weather map.
+const D2R = Math.PI / 180, R2D = 180 / Math.PI, J2000 = 2451545;
+const toJulian = d => d.getTime() / 86400000 + 2440587.5;
+const fromJulian = j => new Date((j - 2440587.5) * 86400000);
+
+// The sun's altitude, in degrees, that defines each event.
+const SUN_ALT = {
+  night: -18,      // astronomical twilight
+  nautical: -12,
+  civil: -6,
+  sunrise: -0.833, // refraction plus the sun's own radius
+  golden: 6        // the soft light photographers and chasers plan around
+};
+
+function sunPosition(jd) {
+  const n = jd - J2000;
+  const M = (357.5291 + 0.98560028 * n) % 360;
+  const C = 1.9148 * Math.sin(M * D2R) + 0.02 * Math.sin(2 * M * D2R) + 0.0003 * Math.sin(3 * M * D2R);
+  const lam = (M + C + 282.9372) % 360;
+  return { M, lam, dec: Math.asin(Math.sin(lam * D2R) * Math.sin(23.4397 * D2R)) * R2D };
+}
+
+/**
+ * Sun events for the day containing `date` at this spot. Times come back as Dates,
+ * or null where the event never happens -- above the Arctic circle in June the sun
+ * simply does not set, and saying so beats printing a fabricated time.
+ */
+function sunTimes(date, lat, lon) {
+  const n = Math.round(toJulian(date) - J2000 - 0.0009 + lon / 360);
+  const jStar = J2000 + 0.0009 - lon / 360 + n;
+  const { M, lam, dec } = sunPosition(jStar);
+  const noon = jStar + 0.0053 * Math.sin(M * D2R) - 0.0069 * Math.sin(2 * lam * D2R);
+  const sinLat = Math.sin(lat * D2R), cosLat = Math.cos(lat * D2R);
+  const sinDec = Math.sin(dec * D2R), cosDec = Math.cos(dec * D2R);
+  // NaN: the sun never climbs that high today. Infinity: it never drops that low.
+  const hourAngle = alt => {
+    const c = (Math.sin(alt * D2R) - sinLat * sinDec) / (cosLat * cosDec);
+    return c > 1 ? NaN : c < -1 ? Infinity : Math.acos(c) * R2D / 360;
+  };
+  const pair = alt => {
+    const w = hourAngle(alt);
+    return Number.isFinite(w) ? [fromJulian(noon - w), fromJulian(noon + w)] : [null, null];
+  };
+  const [sunrise, sunset] = pair(SUN_ALT.sunrise);
+  const [dawn, dusk] = pair(SUN_ALT.civil);
+  const [nauticalDawn, nauticalDusk] = pair(SUN_ALT.nautical);
+  const [nightEnd, nightStart] = pair(SUN_ALT.night);
+  const [goldenEnd, goldenStart] = pair(SUN_ALT.golden);
+  const w = hourAngle(SUN_ALT.sunrise);
+  const polar = Number.isNaN(w) ? 'night' : w === Infinity ? 'day' : null;
+  return {
+    solarNoon: fromJulian(noon), declination: dec, polar,
+    sunrise, sunset, dawn, dusk, nauticalDawn, nauticalDusk,
+    nightEnd, nightStart, goldenEnd, goldenStart,
+    dayLength: sunrise && sunset ? sunset - sunrise : polar === 'day' ? 86400000 : 0
+  };
+}
+
+const MOON_NAMES = ['New moon', 'Waxing crescent', 'First quarter', 'Waxing gibbous',
+  'Full moon', 'Waning gibbous', 'Last quarter', 'Waning crescent'];
+const SYNODIC = 29.530588853;
+
+/** Moon phase as a fraction of the cycle: 0 is new, 0.5 is full. */
+function moonPhase(date) {
+  const n = toJulian(date) - J2000;
+  const ms = (357.5291 + 0.98560028 * n) * D2R;
+  const sunLon = 280.459 + 0.98564736 * n + 1.915 * Math.sin(ms) + 0.02 * Math.sin(2 * ms);
+  const moonLon = 218.316 + 13.176396 * n + 6.289 * Math.sin((134.963 + 13.064993 * n) * D2R);
+  const phase = ((((moonLon - sunLon) % 360) + 360) % 360) / 360;
+  return {
+    phase,
+    illum: (1 - Math.cos(phase * 2 * Math.PI)) / 2,
+    age: phase * SYNODIC,
+    name: moonName(phase)
+  };
+}
+
+/**
+ * The four principal phases get a narrow window, roughly fourteen hours either side,
+ * rather than an eighth of the cycle each. Splitting the cycle evenly would call a
+ * two-thirds lit moon "last quarter", which is the one thing a reader would notice.
+ */
+function moonName(phase) {
+  const p = ((phase % 1) + 1) % 1, near = 0.02;
+  if (p < near || p > 1 - near) return MOON_NAMES[0];
+  if (Math.abs(p - 0.25) < near) return MOON_NAMES[2];
+  if (Math.abs(p - 0.5) < near) return MOON_NAMES[4];
+  if (Math.abs(p - 0.75) < near) return MOON_NAMES[6];
+  return p < 0.25 ? MOON_NAMES[1] : p < 0.5 ? MOON_NAMES[3] : p < 0.75 ? MOON_NAMES[5] : MOON_NAMES[7];
+}
+
+/** A moon disc drawn with one ellipse for the terminator; no image needed. */
+function moonSVG(phase, r = 15) {
+  const k = Math.cos(phase * 2 * Math.PI);          // terminator half-width, signed
+  const sweepOuter = phase < 0.5 ? 1 : 0;
+  const sweepInner = k > 0 ? sweepOuter : 1 - sweepOuter;
+  const d = `M0 ${-r} A ${r} ${r} 0 0 ${sweepOuter} 0 ${r} A ${Math.abs(k) * r} ${r} 0 0 ${sweepInner} 0 ${-r}`;
+  return `<svg viewBox="${-r - 1} ${-r - 1} ${2 * r + 2} ${2 * r + 2}" width="${2 * r}" height="${2 * r}" aria-hidden="true">`
+    + `<circle r="${r}" fill="#1B2D40" stroke="#2A4058"/><path d="${d}" fill="#e8eff6"/></svg>`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Hodograph and severe-weather parameters                             */
+/* ------------------------------------------------------------------ */
+// What separates a chase-planning tool from a forecast app: the sounding already
+// carries wind at every level, so shear, helicity and storm motion are free.
+const KT2MS = 0.514444;
+
+/** Meteorological wind (the direction it blows FROM) to u/v components. */
+function uvFromWind(speed, dir) {
+  const r = dir * D2R;
+  return [-speed * Math.sin(r), -speed * Math.cos(r)];
+}
+function windFromUV(u, v) {
+  return { speed: Math.hypot(u, v), dir: (Math.atan2(-u, -v) * R2D + 360) % 360 };
+}
+
+/** Height-indexed wind profile in m/s above ground, sorted upward. */
+function windProfile(prof) {
+  const pts = prof
+    .filter(q => Number.isFinite(q.z) && Number.isFinite(q.ws) && Number.isFinite(q.wd))
+    .map(q => { const [u, v] = uvFromWind(q.ws * KT2MS, q.wd); return { z: q.z, p: q.p, u, v }; })
+    .sort((a, b) => a.z - b.z);
+  if (!pts.length) return [];
+  const ground = pts[0].z;
+  return pts.map(q => Object.assign(q, { agl: q.z - ground }));
+}
+
+/** The wind at one height, interpolated. Above the profile it returns null
+ *  rather than extrapolating a number nobody should trust. */
+function windAt(levels, agl) {
+  if (!levels.length) return null;
+  if (agl <= levels[0].agl) return { u: levels[0].u, v: levels[0].v };
+  for (let i = 1; i < levels.length; i++) {
+    if (agl <= levels[i].agl) {
+      const a = levels[i - 1], b = levels[i];
+      const f = b.agl === a.agl ? 0 : (agl - a.agl) / (b.agl - a.agl);
+      return { u: a.u + (b.u - a.u) * f, v: a.v + (b.v - a.v) * f };
+    }
+  }
+  return null;
+}
+
+/** Bulk wind difference across a layer, in m/s. */
+function bulkShear(levels, lo, hi) {
+  const a = windAt(levels, lo), b = windAt(levels, hi);
+  return a && b ? Math.hypot(b.u - a.u, b.v - a.v) : NaN;
+}
+
+/** Mean wind through a layer, sampled evenly by height. */
+function meanWind(levels, lo, hi, step = 100) {
+  let u = 0, v = 0, n = 0;
+  for (let z = lo; z <= hi; z += step) {
+    const w = windAt(levels, z);
+    if (!w) return null;
+    u += w.u; v += w.v; n++;
+  }
+  return n ? { u: u / n, v: v / n } : null;
+}
+
+/** Bunkers et al. (2000) supercell motion: the 0-6 km mean wind pushed 7.5 m/s
+ *  sideways, off the 0-6 km shear vector. Right mover for the northern hemisphere. */
+function bunkersMotion(levels) {
+  const mean = meanWind(levels, 0, 6000), low = meanWind(levels, 0, 500), high = meanWind(levels, 5500, 6000);
+  if (!mean || !low || !high) return null;
+  const su = high.u - low.u, sv = high.v - low.v, mag = Math.hypot(su, sv);
+  if (!mag) return null;
+  const D = 7.5;
+  return {
+    mean,
+    right: { u: mean.u + D * sv / mag, v: mean.v - D * su / mag },
+    left: { u: mean.u - D * sv / mag, v: mean.v + D * su / mag }
+  };
+}
+
+/** Storm-relative helicity through a layer, in m2/s2. Veering winds give a
+ *  positive number; backing winds a negative one. */
+function stormRelativeHelicity(levels, top, motion, step = 100) {
+  if (!motion) return NaN;
+  let prev = windAt(levels, 0), sum = 0;
+  if (!prev) return NaN;
+  for (let z = step; z <= top; z += step) {
+    const w = windAt(levels, z);
+    if (!w) return NaN;
+    sum += (w.u - motion.u) * (prev.v - motion.v) - (prev.u - motion.u) * (w.v - motion.v);
+    prev = w;
+  }
+  return sum;
+}
+
+/** Everything the hodograph panel needs, or null when the profile is too thin. */
+function severeParams(prof) {
+  const levels = windProfile(prof);
+  if (levels.length < 3) return null;
+  const top = levels[levels.length - 1].agl;
+  const motion = bunkersMotion(levels);
+  const right = motion && motion.right;
+  return {
+    levels, motion, top,
+    shear1: bulkShear(levels, 0, 1000),
+    shear3: bulkShear(levels, 0, 3000),
+    shear6: bulkShear(levels, 0, 6000),
+    srh1: right ? stormRelativeHelicity(levels, 1000, right) : NaN,
+    srh3: right ? stormRelativeHelicity(levels, 3000, right) : NaN
+  };
+}
+
+// Height bands on the hodograph trace, matching the colours chasers expect.
+const HODO_BANDS = [[0, 1000, '#ff5a4e'], [1000, 3000, '#f6b943'], [3000, 6000, '#3fd37a'], [6000, 9000, '#4C8DFF']];
+
+function hodographSVG(sp) {
+  if (!sp) return '';
+  const S = 200, pad = 16, R = S / 2 - pad;
+  const reach = Math.max(12, ...sp.levels.filter(q => q.agl <= 9000).map(q => Math.hypot(q.u, q.v)));
+  const ring = reach <= 20 ? 5 : reach <= 40 ? 10 : 20;
+  const rings = Math.ceil(reach / ring) * ring;
+  const X = u => S / 2 + u / rings * R, Y = v => S / 2 - v / rings * R;
+  let g = '';
+  for (let r = ring; r <= rings; r += ring) {
+    g += `<circle cx="${S / 2}" cy="${S / 2}" r="${(r / rings * R).toFixed(1)}" fill="none" stroke="#2A4058" stroke-width="0.8"/>`;
+    g += `<text x="${S / 2 + 2}" y="${(Y(0) - r / rings * R - 2).toFixed(1)}" fill="#6d8299" font-size="8">${r}</text>`;
+  }
+  g += `<line x1="${pad}" y1="${S / 2}" x2="${S - pad}" y2="${S / 2}" stroke="#2A4058" stroke-width="0.8"/>`;
+  g += `<line x1="${S / 2}" y1="${pad}" x2="${S / 2}" y2="${S - pad}" stroke="#2A4058" stroke-width="0.8"/>`;
+  for (const [lo, hi, color] of HODO_BANDS) {
+    const pts = [];
+    for (let z = lo; z <= hi; z += 250) {
+      const w = windAt(sp.levels, z);
+      if (!w) break;
+      pts.push(`${X(w.u).toFixed(1)} ${Y(w.v).toFixed(1)}`);
+    }
+    if (pts.length > 1) g += `<polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>`;
+  }
+  for (const z of [1000, 3000, 6000]) {
+    const w = windAt(sp.levels, z);
+    if (w) g += `<circle cx="${X(w.u).toFixed(1)}" cy="${Y(w.v).toFixed(1)}" r="2.6" fill="#0F1B28" stroke="#e8eff6" stroke-width="1.2"/>`;
+  }
+  if (sp.motion) {
+    const m = sp.motion.right;
+    g += `<g transform="translate(${X(m.u).toFixed(1)} ${Y(m.v).toFixed(1)})"><circle r="4.5" fill="none" stroke="#e8eff6" stroke-width="1.4"/><path d="M-4.5 0h9M0 -4.5v9" stroke="#e8eff6" stroke-width="1.1"/></g>`;
+  }
+  return `<svg class="hodo" viewBox="0 0 ${S} ${S}" role="img" aria-label="Hodograph">${g}</svg>`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Precipitation nowcast                                               */
+/* ------------------------------------------------------------------ */
+// The one thing Dark Sky did better than everyone: not "60% chance today" but
+// "rain in 20 minutes". Built from Open-Meteo's quarter-hourly precipitation.
+const WET = 0.1; // mm in a quarter hour; below this is drizzle nobody notices
+
+/**
+ * Reads the next few hours of quarter-hourly precipitation and says what changes.
+ * Returns null when there is no usable data rather than inventing a forecast.
+ */
+function nowcast(times, precip, now = Date.now(), horizonH = 6) {
+  if (!Array.isArray(times) || !Array.isArray(precip) || !times.length) return null;
+  const nowS = now / 1000;
+  let i = times.findIndex(t => t + 900 > nowS);
+  if (i < 0) return null;
+  const end = Math.min(times.length, i + horizonH * 4);
+  const wetAt = k => Number.isFinite(precip[k]) && precip[k] >= WET;
+  const minutes = k => Math.max(0, Math.round((times[k] - nowS) / 60));
+  const raining = wetAt(i);
+  for (let k = i + 1; k < end; k++) {
+    if (wetAt(k) !== raining) {
+      const m = minutes(k);
+      const when = m < 5 ? 'within minutes' : m < 60 ? `in about ${Math.round(m / 5) * 5} min` : `in about ${(m / 60).toFixed(m < 120 ? 1 : 0)} h`;
+      return {
+        raining, changesIn: m, changesAt: times[k] * 1000,
+        text: raining ? `Rain easing ${when}` : `Rain starting ${when}`
+      };
+    }
+  }
+  const span = Math.round((times[end - 1] - nowS) / 3600);
+  return {
+    raining, changesIn: null, changesAt: null,
+    text: raining ? `Rain continuing for at least ${span} h` : `No rain in the next ${span} h`
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Air quality                                                         */
+/* ------------------------------------------------------------------ */
+const AQI_BANDS = [
+  [50, 'Good', '#3fd37a'],
+  [100, 'Moderate', '#e8e05a'],
+  [150, 'Unhealthy for sensitive groups', '#f6b943'],
+  [200, 'Unhealthy', '#e5533b'],
+  [300, 'Very unhealthy', '#8a45c9'],
+  [Infinity, 'Hazardous', '#8f1c5b']
+];
+function aqiBand(aqi) {
+  if (!Number.isFinite(aqi)) return null;
+  const [, name, color] = AQI_BANDS.find(b => aqi <= b[0]);
+  return { name, color };
+}
+
+const AQ_POLLUTANTS = [
+  ['us_aqi_pm2_5', 'PM2.5'], ['us_aqi_pm10', 'PM10'], ['us_aqi_o3', 'Ozone'],
+  ['us_aqi_no2', 'NO₂'], ['us_aqi_so2', 'SO₂'], ['us_aqi_co', 'CO']
+];
+/** The pollutant driving the headline number, which is the one worth naming. */
+function dominantPollutant(sub) {
+  let best = null;
+  for (const [key, label] of AQ_POLLUTANTS) {
+    const v = sub && sub[key];
+    if (Number.isFinite(v) && (!best || v > best.value)) best = { key, label, value: v };
+  }
+  return best;
+}
+
+/* ------------------------------------------------------------------ */
+/* Saved places                                                        */
+/* ------------------------------------------------------------------ */
+// Every good weather app remembers where you care about. Isobar remembered the
+// map view but not the places, so every check meant searching again.
+const MAX_SAVED = 12;
+const placeKey = (lat, lon) => `${(+lat).toFixed(3)},${(+lon).toFixed(3)}`;
+
+function addPlace(list, place, max = MAX_SAVED) {
+  const key = placeKey(place.lat, place.lon);
+  return [{ lat: +place.lat, lon: +place.lon, name: place.name, key }]
+    .concat(list.filter(p => placeKey(p.lat, p.lon) !== key))
+    .slice(0, max);
+}
+const removePlace = (list, lat, lon) => list.filter(p => placeKey(p.lat, p.lon) !== placeKey(lat, lon));
+const hasPlace = (list, lat, lon) => list.some(p => placeKey(p.lat, p.lon) === placeKey(lat, lon));
+
+/* ------------------------------------------------------------------ */
+/* Conditions tab: now, nowcast, air quality, sun and moon             */
+/* ------------------------------------------------------------------ */
+const WMO = {
+  0: 'Clear', 1: 'Mainly clear', 2: 'Partly cloudy', 3: 'Overcast',
+  45: 'Fog', 48: 'Freezing fog',
+  51: 'Light drizzle', 53: 'Drizzle', 55: 'Heavy drizzle',
+  56: 'Freezing drizzle', 57: 'Freezing drizzle',
+  61: 'Light rain', 63: 'Rain', 65: 'Heavy rain',
+  66: 'Freezing rain', 67: 'Freezing rain',
+  71: 'Light snow', 73: 'Snow', 75: 'Heavy snow', 77: 'Snow grains',
+  80: 'Rain showers', 81: 'Rain showers', 82: 'Violent rain showers',
+  85: 'Snow showers', 86: 'Heavy snow showers',
+  95: 'Thunderstorm', 96: 'Thunderstorm with hail', 99: 'Thunderstorm with hail'
+};
+const wmoText = c => WMO[c] || (Number.isFinite(c) ? 'Unsettled' : '');
+
+const cToF = c => c * 9 / 5 + 32;
+const fmtTemp = c => Number.isFinite(c) ? `${Math.round(cToF(c))}°` : '–';
+const fmtClock = d => d ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '–';
+const fmtDur = ms => `${Math.floor(ms / 3600000)} h ${Math.round(ms % 3600000 / 60000)} m`;
+
+// api.weather.gov names the nearest town for any US point. Everywhere else keeps
+// coordinates, which is honest -- there is no free worldwide reverse geocoder here.
+const nameCache = new Map();
+async function reverseName(lat, lon) {
+  const key = placeKey(lat, lon);
+  if (nameCache.has(key)) return nameCache.get(key);
+  let name = null;
+  try {
+    const r = await fetch(`https://api.weather.gov/points/${lat.toFixed(4)},${normLon(lon).toFixed(4)}`);
+    if (r.ok) {
+      const p = (await r.json()).properties;
+      const rl = p && p.relativeLocation && p.relativeLocation.properties;
+      if (rl && rl.city) name = [rl.city, rl.state].filter(Boolean).join(', ');
+    }
+  } catch { /* the panel works fine without a name */ }
+  nameCache.set(key, name);
+  return name;
+}
+
+let nowKey = '';
+async function loadNow() {
+  const pt = state.point, box = $('#tabNow');
+  if (!pt) return;
+  const key = `${pt.lat}|${pt.lon}`;
+  if (key === nowKey && box.dataset.ok === '1') return;
+  nowKey = key;
+  box.dataset.ok = '';
+  box.innerHTML = '<p class="empty">Loading conditions…</p>';
+
+  const coords = { latitude: pt.lat.toFixed(4), longitude: normLon(pt.lon).toFixed(4) };
+  const weather = fetch('https://api.open-meteo.com/v1/forecast?' + qs({
+    ...coords,
+    current: 'temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m,uv_index,is_day',
+    minutely_15: 'precipitation',
+    daily: 'temperature_2m_max,temperature_2m_min,precipitation_sum,uv_index_max',
+    forecast_days: 2, timeformat: 'unixtime', wind_speed_unit: 'kn'
+  })).then(r => r.json());
+  const air = fetch('https://air-quality-api.open-meteo.com/v1/air-quality?' + qs({
+    ...coords,
+    current: 'us_aqi,us_aqi_pm2_5,us_aqi_pm10,us_aqi_o3,us_aqi_no2,us_aqi_so2,us_aqi_co',
+    timeformat: 'unixtime'
+  })).then(r => r.json()).catch(() => null);
+
+  let w, a;
+  try { [w, a] = await Promise.all([weather, air]); }
+  catch {
+    if (nowKey !== key) return;
+    box.innerHTML = '<p class="empty">Conditions are unavailable right now.</p>';
+    return;
+  }
+  if (nowKey !== key) return;
+  if (!w || !w.current) { box.innerHTML = '<p class="empty">Conditions are unavailable for this spot.</p>'; return; }
+
+  const c = w.current;
+  const cast = w.minutely_15 ? nowcast(w.minutely_15.time, w.minutely_15.precipitation) : null;
+  const sun = sunTimes(new Date(), pt.lat, normLon(pt.lon));
+  const moon = moonPhase(new Date());
+  const aqi = a && a.current ? a.current.us_aqi : NaN;
+  const band = aqiBand(aqi);
+  const worst = a && a.current ? dominantPollutant(a.current) : null;
+  const day = w.daily;
+
+  const sunRow = sun.polar === 'day' ? 'The sun stays up all day here right now.'
+    : sun.polar === 'night' ? 'The sun stays down all day here right now.'
+    : `Sunrise ${fmtClock(sun.sunrise)} · Sunset ${fmtClock(sun.sunset)} · ${fmtDur(sun.dayLength)} of daylight`;
+
+  box.innerHTML = `
+    <div class="now-head">
+      <div class="now-temp">${fmtTemp(c.temperature_2m)}</div>
+      <div class="now-meta">
+        <b>${esc(wmoText(c.weather_code))}</b>
+        <span>Feels like ${fmtTemp(c.apparent_temperature)}</span>
+        ${day ? `<span>High ${fmtTemp(day.temperature_2m_max[0])} · Low ${fmtTemp(day.temperature_2m_min[0])}</span>` : ''}
+      </div>
+      <div class="now-barb"><svg viewBox="-22 -22 44 44" width="44" height="44" aria-label="Wind">${barbMarkup(c.wind_speed_10m, c.wind_direction_10m, 17)}</svg></div>
+    </div>
+    ${cast ? `<p class="nowcast${cast.raining ? ' wet' : ''}">${esc(cast.text)}</p>` : ''}
+    <div class="stats">
+      <div><span>Wind</span><b>${Math.round(c.wind_speed_10m)} kt</b></div>
+      <div><span>Gusts</span><b>${Math.round(c.wind_gusts_10m)} kt</b></div>
+      <div><span>Humidity</span><b>${Math.round(c.relative_humidity_2m)}%</b></div>
+      <div><span>UV index</span><b>${Number.isFinite(c.uv_index) ? Math.round(c.uv_index) : '–'}</b></div>
+      ${band ? `<div><span>Air quality${worst ? ' · ' + esc(worst.label) : ''}</span><b style="color:${band.color}">${Math.round(aqi)} ${esc(band.name)}</b></div>` : ''}
+      <div><span>Daylight</span><b>${sun.polar ? '–' : fmtDur(sun.dayLength)}</b></div>
+    </div>
+    <div class="sunmoon">
+      <div class="moon">${moonSVG(moon.phase)}<div><b>${esc(moon.name)}</b><span>${Math.round(moon.illum * 100)}% lit · day ${Math.round(moon.age)} of ${Math.round(SYNODIC)}</span></div></div>
+      <p class="fine">${esc(sunRow)}</p>
+      ${sun.polar ? '' : `<p class="fine">First light ${fmtClock(sun.dawn)} · Golden hour ends ${fmtClock(sun.goldenEnd)} · Golden hour returns ${fmtClock(sun.goldenStart)} · Last light ${fmtClock(sun.dusk)}</p>`}
+    </div>
+    <p class="fine">Conditions blend Open-Meteo's best available models for this spot, not the model selected on the map.</p>`;
+  box.dataset.ok = '1';
+}
+
+/* ------------------------------------------------------------------ */
+/* Saved places                                                        */
+/* ------------------------------------------------------------------ */
+/** Bulk shear reads in knots, the unit every severe-weather product uses. */
+const fmtKt = ms => Number.isFinite(ms) ? `${Math.round(ms / KT2MS)} kt` : '\u2013';
+const fmtSRH = v => Number.isFinite(v) ? `${Math.round(v)} m\u00b2/s\u00b2` : '\u2013';
+
+/** Fills in a tapped spot's place name once api.weather.gov answers. */
+async function nameSpot(pt) {
+  const found = await reverseName(pt.lat, pt.lon);
+  if (!found || state.point !== pt) return;
+  pt.name = found;
+  $('#ptTitle').textContent = found;
+  syncSaveButton();
+}
+
+function syncSaveButton() {
+  const b = $('#ptSave');
+  if (!b) return;
+  const on = state.point && hasPlace(state.saved, state.point.lat, state.point.lon);
+  b.setAttribute('aria-pressed', String(!!on));
+  b.setAttribute('aria-label', on ? 'Remove this place from saved' : 'Save this place');
+  b.classList.toggle('on', !!on);
+}
+
+function toggleSaved() {
+  const pt = state.point;
+  if (!pt) return;
+  state.saved = hasPlace(state.saved, pt.lat, pt.lon)
+    ? removePlace(state.saved, pt.lat, pt.lon)
+    : addPlace(state.saved, { lat: pt.lat, lon: pt.lon, name: pt.name || `${pt.lat.toFixed(2)}°, ${pt.lon.toFixed(2)}°` });
+  store.set('saved', state.saved);
+  syncSaveButton();
+  renderSaved();
+}
+
+function renderSaved() {
+  const list = $('#results');
+  if (!state.saved.length) { list.innerHTML = '<li><button disabled>No saved places yet</button></li>'; return; }
+  list.innerHTML = '<li class="results-head">Saved places</li>' + state.saved.map((p, i) =>
+    `<li><button data-saved="${i}">${esc(p.name)}<small>${p.lat.toFixed(2)}°, ${p.lon.toFixed(2)}°</small></button></li>`).join('');
+  $$('button[data-saved]', list).forEach(b => b.addEventListener('click', () => {
+    const p = state.saved[+b.dataset.saved];
+    list.hidden = true; q.blur();
+    const ll = L.latLng(p.lat, p.lon);
+    map.setView(ll, Math.max(map.getZoom(), 8));
+    openPoint(ll, p.name);
+  }));
+}
+
+/* ------------------------------------------------------------------ */
 /* Search and location                                                 */
 /* ------------------------------------------------------------------ */
 let searchTimer = 0, searchSeq = 0;
@@ -1797,7 +2347,7 @@ const q = $('#q'), results = $('#results');
 q.addEventListener('input', () => {
   clearTimeout(searchTimer);
   const text = q.value.trim();
-  if (text.length < 2) { results.hidden = true; return; }
+  if (text.length < 2) { if (text) results.hidden = true; else { renderSaved(); results.hidden = false; } return; }
   searchTimer = setTimeout(async () => {
     const seq = ++searchSeq;
     try {
@@ -1816,6 +2366,7 @@ q.addEventListener('input', () => {
     } catch { setStatus('Place search is unavailable right now.', 'error'); }
   }, 300);
 });
+q.addEventListener('focus', () => { if (!q.value.trim()) { renderSaved(); results.hidden = false; } });
 q.addEventListener('keydown', e => { if (e.key === 'Enter') { const b = $('button[data-i]', results); if (b) b.click(); } if (e.key === 'Escape') results.hidden = true; });
 document.addEventListener('click', e => { if (!e.target.closest('.search')) results.hidden = true; });
 
@@ -1838,6 +2389,7 @@ $('#fields').addEventListener('click', e => { const b = e.target.closest('[data-
 $('#slider').addEventListener('input', e => { if (state.playing) setPlaying(false); setTime(+e.target.value); });
 $('#play').addEventListener('click', () => setPlaying(!state.playing));
 $('#validTime').addEventListener('click', () => { setPlaying(false); setTime(0); });
+$('#ptSave').addEventListener('click', toggleSaved);
 $('#layersBtn').addEventListener('click', () => { const p = $('#layersPanel'); if (p.hidden) openSheet('layersPanel'); else closeSheet('layersPanel'); });
 
 const opacity = $('#opacity');
