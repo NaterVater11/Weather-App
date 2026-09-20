@@ -24,11 +24,20 @@ export async function appScript() {
   return html.slice(open + '\n<script>\n'.length, close);
 }
 
-// Strips strings, template literals, regex literals and comments to spaces so brace
-// counting can't be fooled by a `}` inside `${...}` or a character class.
+// Blanks strings, template literals, regex literals and comments to spaces so brace
+// counting cannot be fooled by a `}` inside `${...}` or a character class.
+//
+// Template literals need a mode stack, not a scan for the next backtick: `${`nested`}`
+// is legal and common in this codebase, and a naive scan desynchronises on it and
+// silently mis-masks the rest of the file.
 function blank(src) {
   const out = src.split('');
+  const wipe = i => { out[i] = src[i] === '\n' ? '\n' : ' '; };
+  const stack = [];      // 'tmpl' inside a template, 'expr' inside its ${...}
+  const depth = [];      // brace depth within the current ${...}
+  const top = () => stack[stack.length - 1];
   let i = 0;
+
   const isRegexPos = () => {
     for (let k = i - 1; k >= 0; k--) {
       const c = src[k];
@@ -37,29 +46,59 @@ function blank(src) {
     }
     return true;
   };
+
   while (i < src.length) {
-    const c = src[i];
-    if (c === '/' && src[i + 1] === '/') { while (i < src.length && src[i] !== '\n') out[i++] = ' '; continue; }
-    if (c === '/' && src[i + 1] === '*') { out[i++] = ' '; out[i++] = ' '; while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) out[i++] = ' '; out[i++] = ' '; out[i++] = ' '; continue; }
-    if (c === '"' || c === "'" || c === '`') {
-      const q = c; out[i++] = ' ';
-      while (i < src.length && src[i] !== q) {
-        if (src[i] === '\\') { out[i++] = ' '; if (i < src.length) out[i++] = ' '; continue; }
-        out[i] = src[i] === '\n' ? '\n' : ' '; i++;
-      }
-      out[i++] = ' '; continue;
+    const c = src[i], c2 = src[i + 1];
+
+    if (top() === 'tmpl') {
+      if (c === '\\') { wipe(i); if (i + 1 < src.length) wipe(i + 1); i += 2; continue; }
+      if (c === '`') { wipe(i); stack.pop(); i++; continue; }
+      if (c === '$' && c2 === '{') { wipe(i); wipe(i + 1); stack.push('expr'); depth.push(0); i += 2; continue; }
+      wipe(i); i++; continue;
     }
+
+    if (c === '/' && c2 === '/') { while (i < src.length && src[i] !== '\n') { wipe(i); i++; } continue; }
+    if (c === '/' && c2 === '*') {
+      wipe(i); wipe(i + 1); i += 2;
+      while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) { wipe(i); i++; }
+      if (i < src.length) { wipe(i); wipe(i + 1); i += 2; }
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      const q = c; wipe(i); i++;
+      while (i < src.length && src[i] !== q) {
+        if (src[i] === '\\') { wipe(i); if (i + 1 < src.length) wipe(i + 1); i += 2; continue; }
+        wipe(i); i++;
+      }
+      if (i < src.length) { wipe(i); i++; }
+      continue;
+    }
+    if (c === '`') { wipe(i); stack.push('tmpl'); i++; continue; }
     if (c === '/' && isRegexPos()) {
-      out[i++] = ' '; let cls = false;
+      wipe(i); i++;
+      let cls = false;
       while (i < src.length) {
-        if (src[i] === '\\') { out[i++] = ' '; if (i < src.length) out[i++] = ' '; continue; }
-        if (src[i] === '[') cls = true; else if (src[i] === ']') cls = false;
+        if (src[i] === '\\') { wipe(i); if (i + 1 < src.length) wipe(i + 1); i += 2; continue; }
+        if (src[i] === '[') cls = true;
+        else if (src[i] === ']') cls = false;
         else if (src[i] === '/' && !cls) break;
         else if (src[i] === '\n') break;
-        out[i++] = ' ';
+        wipe(i); i++;
       }
-      out[i++] = ' '; continue;
+      if (i < src.length) { wipe(i); i++; }
+      continue;
     }
+
+    if (top() === 'expr') {
+      // The expression is blanked too; only its braces matter, to find the closing }.
+      if (c === '{') { depth[depth.length - 1]++; wipe(i); i++; continue; }
+      if (c === '}') {
+        if (depth[depth.length - 1] === 0) { wipe(i); stack.pop(); depth.pop(); i++; continue; }
+        depth[depth.length - 1]--; wipe(i); i++; continue;
+      }
+      wipe(i); i++; continue;
+    }
+
     i++;
   }
   return out.join('');

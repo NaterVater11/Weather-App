@@ -513,3 +513,199 @@ test('placeKey: is stable and rounds to about a hundred metres', () => {
   assert.equal(app.placeKey(40.7128, -74.006), app.placeKey(40.71281, -74.00604));
   assert.notEqual(app.placeKey(40.7128, -74.006), app.placeKey(40.7138, -74.006));
 });
+
+/* ------------------------------------------------------------------ */
+/* Weather icons and the forecast strips                               */
+/* ------------------------------------------------------------------ */
+
+const wx = await load(['WMO', 'wmoText', 'WMO_GROUP', 'wmoGroup', 'ICON_ART', 'weatherIcon',
+  'rangeBar', 'hourlySlice', 'dailyRows']);
+
+// Every code Open-Meteo documents for weather_code.
+const ALL_WMO = [0, 1, 2, 3, 45, 48, 51, 53, 55, 56, 57, 61, 63, 65, 66, 67,
+  71, 73, 75, 77, 80, 81, 82, 85, 86, 95, 96, 99];
+
+test('WMO: the text and icon tables cover exactly the same codes', () => {
+  // If one gains a code and the other does not, a forecast row shows a word with no
+  // picture or a picture with no word, depending which way it drifted.
+  assert.deepEqual(Object.keys(wx.WMO).map(Number).sort((a, b) => a - b),
+    Object.keys(wx.WMO_GROUP).map(Number).sort((a, b) => a - b));
+});
+
+test('WMO: every documented code has text and an icon group', () => {
+  for (const code of ALL_WMO) {
+    assert.ok(wx.WMO[code], `code ${code} has no description`);
+    assert.ok(wx.wmoGroup(code), `code ${code} has no icon group`);
+    assert.ok(wx.ICON_ART[wx.wmoGroup(code)], `group for ${code} has no artwork`);
+  }
+});
+
+test('WMO: every group in the table has artwork, and none is unused', () => {
+  const used = new Set(Object.values(wx.WMO_GROUP));
+  assert.deepEqual([...used].sort(), Object.keys(wx.ICON_ART).sort());
+});
+
+test('wmoGroup: an unknown number falls back, a non-number does not', () => {
+  assert.equal(wx.wmoGroup(7), 'cloudy', 'an unexpected code still gets a picture');
+  assert.equal(wx.wmoGroup(NaN), null);
+  assert.equal(wx.wmoGroup(null), null);
+  assert.equal(wx.wmoGroup(undefined), null);
+});
+
+test('weatherIcon: draws valid markup for every code, day and night', () => {
+  for (const code of ALL_WMO) {
+    for (const day of [true, false]) {
+      const svg = wx.weatherIcon(code, day);
+      assert.match(svg, /^<svg /, `code ${code} produced no svg`);
+      assert.ok(svg.trim().endsWith('</svg>'), `code ${code} is unterminated`);
+      assert.ok(!svg.includes('NaN'), `NaN in the icon for ${code}`);
+      assert.ok(!svg.includes('undefined'), `undefined in the icon for ${code}`);
+      assert.equal((svg.match(/<svg/g) || []).length, 1, `nested svg for ${code}`);
+      assert.match(svg, /aria-label="[^"]+"/, `code ${code} has no label`);
+    }
+  }
+});
+
+test('weatherIcon: clear skies differ between day and night', () => {
+  assert.notEqual(wx.weatherIcon(0, true), wx.weatherIcon(0, false), 'a night sun would be odd');
+  // Overcast looks the same either way, and should.
+  assert.equal(wx.weatherIcon(3, true), wx.weatherIcon(3, false));
+});
+
+test('weatherIcon: nothing to draw for a missing code', () => {
+  for (const c of [NaN, null, undefined]) assert.equal(wx.weatherIcon(c), '');
+});
+
+test('rangeBar: places a day on the shared scale', () => {
+  // A week from 30 to 80: a 50-to-60 day starts 40% along and covers 20%.
+  const b = wx.rangeBar(50, 60, 30, 80);
+  close(b.x, 40, 1e-9, 'bar start');
+  close(b.w, 20, 1e-9, 'bar width');
+});
+
+test('rangeBar: the coldest and warmest days touch the ends', () => {
+  const cold = wx.rangeBar(30, 40, 30, 80);
+  close(cold.x, 0, 1e-9);
+  const warm = wx.rangeBar(70, 80, 30, 80);
+  close(warm.x + warm.w, 100, 1e-9);
+});
+
+test('rangeBar: never runs off the end of its track', () => {
+  for (const [lo, hi] of [[-50, 200], [-999, -998], [500, 900], [0, 0]]) {
+    const b = wx.rangeBar(lo, hi, 30, 80);
+    assert.ok(b.x >= 0 && b.x <= 100, `bar starts off the track at ${b.x}`);
+    assert.ok(b.w > 0 && b.x + b.w <= 100.0001, `bar ends off the track at ${b.x + b.w}`);
+  }
+});
+
+test('rangeBar: a flat week fills the track rather than vanishing', () => {
+  assert.deepEqual(wx.rangeBar(50, 50, 50, 50), { x: 0, w: 100 });
+});
+
+test('rangeBar: a reversed high and low still draws', () => {
+  const b = wx.rangeBar(60, 50, 30, 80);
+  close(b.x, 40, 1e-9);
+  close(b.w, 20, 1e-9);
+});
+
+test('rangeBar: missing numbers draw nothing', () => {
+  assert.equal(wx.rangeBar(NaN, 60, 30, 80), null);
+  assert.equal(wx.rangeBar(50, 60, NaN, 80), null);
+  assert.equal(wx.rangeBar(null, undefined, 30, 80), null);
+});
+
+/** An hourly block starting at the top of the current hour. */
+const hourlyFixture = (n = 48, now = Date.now()) => {
+  const t0 = Math.floor(now / 3600000) * 3600;
+  const time = [], temperature_2m = [], weather_code = [], precipitation_probability = [], is_day = [];
+  for (let i = 0; i < n; i++) {
+    time.push(t0 + i * 3600);
+    temperature_2m.push(10 + i);
+    weather_code.push(i % 2 ? 61 : 0);
+    precipitation_probability.push(i * 2);
+    is_day.push(i % 24 < 12 ? 1 : 0);
+  }
+  return { time, temperature_2m, weather_code, precipitation_probability, is_day };
+};
+
+test('hourlySlice: returns the next 24 hours from now', () => {
+  const out = wx.hourlySlice(hourlyFixture());
+  assert.equal(out.length, 24);
+  assert.ok(out[0].time + 3600000 > Date.now(), 'the first entry should not be in the past');
+  assert.equal(out[0].temp, 10);
+  assert.equal(typeof out[0].isDay, 'boolean');
+});
+
+test('hourlySlice: honours a shorter request and a short series', () => {
+  assert.equal(wx.hourlySlice(hourlyFixture(), Date.now(), 6).length, 6);
+  assert.equal(wx.hourlySlice(hourlyFixture(3)).length, 3, 'it cannot invent hours it does not have');
+});
+
+test('hourlySlice: a series that has already ended gives nothing', () => {
+  assert.deepEqual(wx.hourlySlice(hourlyFixture(24), Date.now() + 40 * 86400000), []);
+});
+
+test('hourlySlice: missing blocks come back as NaN, not a crash', () => {
+  const bare = { time: hourlyFixture(4).time };
+  const out = wx.hourlySlice(bare);
+  assert.equal(out.length, 4);
+  assert.ok(Number.isNaN(out[0].temp));
+  assert.equal(out[0].isDay, true, 'daylight is assumed when the flag is absent');
+});
+
+test('hourlySlice: refuses empty or malformed input', () => {
+  for (const h of [null, undefined, {}, { time: [] }, { time: 'nope' }]) {
+    assert.deepEqual(wx.hourlySlice(h), []);
+  }
+});
+
+const dailyFixture = (n = 7) => {
+  const t0 = Math.floor(Date.now() / 86400000) * 86400;
+  const out = { time: [], weather_code: [], temperature_2m_max: [], temperature_2m_min: [], precipitation_sum: [], precipitation_probability_max: [] };
+  for (let i = 0; i < n; i++) {
+    out.time.push(t0 + i * 86400);
+    out.weather_code.push(i === 2 ? 95 : 2);
+    out.temperature_2m_max.push(60 + i * 3);
+    out.temperature_2m_min.push(40 + i * 2);
+    out.precipitation_sum.push(i * 0.1);
+    out.precipitation_probability_max.push(i * 10);
+  }
+  return out;
+};
+
+test('dailyRows: reads the week and its temperature range', () => {
+  const { rows, min, max } = wx.dailyRows(dailyFixture());
+  assert.equal(rows.length, 7);
+  assert.equal(min, 40, 'the coldest low of the week');
+  assert.equal(max, 78, 'the warmest high of the week');
+  assert.equal(rows[2].code, 95);
+});
+
+test('dailyRows: stops at the limit and at the data', () => {
+  assert.equal(wx.dailyRows(dailyFixture(), 3).rows.length, 3);
+  assert.equal(wx.dailyRows(dailyFixture(2)).rows.length, 2);
+});
+
+test('dailyRows: a missing temperature block leaves the range unknown', () => {
+  const d = dailyFixture();
+  delete d.temperature_2m_max; delete d.temperature_2m_min;
+  const { rows, min, max } = wx.dailyRows(d);
+  assert.equal(rows.length, 7);
+  assert.ok(Number.isNaN(min) && Number.isNaN(max), 'no temperatures, no scale');
+  assert.equal(wx.rangeBar(rows[0].lo, rows[0].hi, min, max), null, 'and so no bar');
+});
+
+test('dailyRows: refuses empty or malformed input', () => {
+  for (const d of [null, undefined, {}, { time: [] }]) {
+    assert.deepEqual(wx.dailyRows(d), { rows: [], min: NaN, max: NaN });
+  }
+});
+
+test('the week always fits its own bars', () => {
+  // The property that matters on screen: every row lands inside the track.
+  const { rows, min, max } = wx.dailyRows(dailyFixture());
+  for (const r of rows) {
+    const b = wx.rangeBar(r.lo, r.hi, min, max);
+    assert.ok(b && b.x >= 0 && b.x + b.w <= 100.0001, `${r.lo}-${r.hi} does not fit`);
+  }
+});

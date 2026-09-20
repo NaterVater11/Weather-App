@@ -252,6 +252,25 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 .sunmoon .moon span{font-size:12.5px;color:var(--muted)}
 .sunmoon .fine{margin-top:7px}
 
+/* Forecast strips */
+.hourly{display:flex;gap:2px;overflow-x:auto;overflow-y:hidden;margin:0 -16px;padding:2px 16px 6px;scrollbar-width:none}
+.hourly::-webkit-scrollbar{display:none}
+.hourly>div{flex:none;width:52px;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 0;border-radius:9px}
+.hourly>div:first-child{background:var(--ink)}
+.hourly span{font-size:11.5px;color:var(--muted);white-space:nowrap}
+.hourly b{font-family:var(--cond);font-size:16px;font-weight:600;font-variant-numeric:tabular-nums}
+.hourly i{font-style:normal;font-size:10.5px;color:var(--cold);min-height:13px}
+.daily{display:flex;flex-direction:column}
+.drow{display:grid;grid-template-columns:44px 24px 30px 34px 1fr 34px;align-items:center;gap:6px;padding:5px 0;border-top:1px solid var(--line)}
+.drow:first-child{border-top:0}
+.dname{font-size:13px;font-weight:600}
+.dpop{font-style:normal;font-size:10.5px;color:var(--cold);text-align:right}
+.dlo,.dhi{font-family:var(--cond);font-size:16px;font-weight:600;font-variant-numeric:tabular-nums;text-align:right}
+.dlo{color:var(--muted)}
+.dbar{position:relative;height:5px;border-radius:3px;background:var(--ink)}
+.dbar i{position:absolute;top:0;height:5px;border-radius:3px;background:linear-gradient(90deg,var(--cold),var(--warm))}
+.wx{flex:none;display:block}
+
 /* Hodograph */
 h3.sub{font-family:var(--cond);font-weight:700;font-size:18px;margin:18px 0 6px}
 .hodo-wrap{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
@@ -2362,8 +2381,9 @@ async function loadNow() {
     ...coords,
     current: 'temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m,uv_index,is_day',
     minutely_15: 'precipitation',
-    daily: 'temperature_2m_max,temperature_2m_min,precipitation_sum,uv_index_max',
-    forecast_days: 2, timeformat: 'unixtime', wind_speed_unit: 'kn'
+    hourly: 'temperature_2m,weather_code,precipitation_probability,is_day',
+    daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,uv_index_max',
+    forecast_days: 7, timeformat: 'unixtime', wind_speed_unit: 'kn'
   })).then(r => r.json());
   const air = fetch('https://air-quality-api.open-meteo.com/v1/air-quality?' + qs({
     ...coords,
@@ -2389,6 +2409,8 @@ async function loadNow() {
   const band = aqiBand(aqi);
   const worst = a && a.current ? dominantPollutant(a.current) : null;
   const day = w.daily;
+  const hours = hourlySlice(w.hourly);
+  const week = dailyRows(w.daily);
 
   const sunRow = sun.polar === 'day' ? 'The sun stays up all day here right now.'
     : sun.polar === 'night' ? 'The sun stays down all day here right now.'
@@ -2413,6 +2435,25 @@ async function loadNow() {
       ${band ? `<div><span>Air quality${worst ? ' · ' + esc(worst.label) : ''}</span><b style="color:${band.color}">${Math.round(aqi)} ${esc(band.name)}</b></div>` : ''}
       <div><span>Daylight</span><b>${sun.polar ? '–' : fmtDur(sun.dayLength)}</b></div>
     </div>
+    ${hours.length ? `<h3 class="sub">Next 24 hours</h3>
+    <div class="hourly">${hours.map(h => `<div>
+      <span>${esc(fmtHour(h.time))}</span>
+      ${weatherIcon(h.code, h.isDay, 22)}
+      <b>${fmtTemp(h.temp)}</b>
+      <i>${Number.isFinite(h.pop) && h.pop >= 20 ? Math.round(h.pop) + '%' : ''}</i>
+    </div>`).join('')}</div>` : ''}
+    ${week.rows.length ? `<h3 class="sub">Seven days</h3>
+    <div class="daily">${week.rows.map((r, i) => {
+      const bar = rangeBar(r.lo, r.hi, week.min, week.max);
+      return `<div class="drow">
+        <span class="dname">${esc(fmtDay(r.time, i))}</span>
+        ${weatherIcon(r.code, true, 22)}
+        <i class="dpop">${Number.isFinite(r.pop) && r.pop >= 20 ? Math.round(r.pop) + '%' : ''}</i>
+        <b class="dlo">${fmtTemp(r.lo)}</b>
+        <span class="dbar">${bar ? `<i style="left:${bar.x.toFixed(1)}%;width:${bar.w.toFixed(1)}%"></i>` : ''}</span>
+        <b class="dhi">${fmtTemp(r.hi)}</b>
+      </div>`;
+    }).join('')}</div>` : ''}
     <div class="sunmoon">
       <div class="moon">${moonSVG(moon.phase)}<div><b>${esc(moon.name)}</b><span>${Math.round(moon.illum * 100)}% lit · day ${Math.round(moon.age)} of ${Math.round(SYNODIC)}</span></div></div>
       <p class="fine">${esc(sunRow)}</p>
@@ -2425,6 +2466,110 @@ async function loadNow() {
 /* ------------------------------------------------------------------ */
 /* Saved places                                                        */
 /* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* Weather icons and the forecast strips                               */
+/* ------------------------------------------------------------------ */
+// WMO codes are numbers; people read pictures. Every code the app can receive maps to
+// one of these groups, and a test walks the whole WMO table to prove none falls through.
+const WMO_GROUP = {
+  0: 'clear', 1: 'clear', 2: 'partly', 3: 'cloudy',
+  45: 'fog', 48: 'fog',
+  51: 'drizzle', 53: 'drizzle', 55: 'drizzle', 56: 'sleet', 57: 'sleet',
+  61: 'rain', 63: 'rain', 65: 'rain', 66: 'sleet', 67: 'sleet',
+  71: 'snow', 73: 'snow', 75: 'snow', 77: 'snow',
+  80: 'showers', 81: 'showers', 82: 'showers',
+  85: 'snow', 86: 'snow',
+  95: 'storm', 96: 'hail', 99: 'hail'
+};
+const wmoGroup = code => WMO_GROUP[code] || (Number.isFinite(code) ? 'cloudy' : null);
+
+// Drawn rather than fetched, so the icons work with every CDN blocked.
+const ICON_ART = {
+  clear: d => d
+    ? '<circle cx="12" cy="12" r="4.6" fill="#f6b943"/><g stroke="#f6b943" stroke-width="1.8" stroke-linecap="round"><path d="M12 2.6v2.4M12 19v2.4M2.6 12h2.4M19 12h2.4M5.3 5.3l1.7 1.7M17 17l1.7 1.7M18.7 5.3L17 7M7 17l-1.7 1.7"/></g>'
+    : '<path d="M20 14.5A8.2 8.2 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5z" fill="#cfd9e4"/>',
+  partly: d => (d
+    ? '<circle cx="9" cy="9" r="3.6" fill="#f6b943"/><g stroke="#f6b943" stroke-width="1.5" stroke-linecap="round"><path d="M9 1.8v1.9M1.8 9h1.9M3.9 3.9l1.3 1.3M14.1 3.9l-1.3 1.3"/></g>'
+    : '<path d="M14.5 10.6A6 6 0 0 1 7 3.2 6.2 6.2 0 1 0 14.5 10.6z" fill="#cfd9e4"/>')
+    + '<path d="M8.5 20h9a3.4 3.4 0 0 0 .3-6.8 4.7 4.7 0 0 0-9-1.2A3.5 3.5 0 0 0 8.5 20z" fill="#9fb2c6"/>',
+  cloudy: () => '<path d="M7 19h10.5a3.7 3.7 0 0 0 .3-7.4 5.2 5.2 0 0 0-10-1.3A3.9 3.9 0 0 0 7 19z" fill="#9fb2c6"/>',
+  fog: () => '<path d="M7 15h10.5a3.7 3.7 0 0 0 .3-7.4 5.2 5.2 0 0 0-10-1.3A3.9 3.9 0 0 0 7 15z" fill="#9fb2c6"/>'
+    + '<g stroke="#cfd9e4" stroke-width="1.7" stroke-linecap="round"><path d="M4 18.5h16M6.5 21.5h11"/></g>',
+  drizzle: () => ICON_ART.cloudy() + '<g stroke="#4C8DFF" stroke-width="1.7" stroke-linecap="round"><path d="M9.5 20.5v1.4M14.5 20.5v1.4"/></g>',
+  rain: () => ICON_ART.cloudy() + '<g stroke="#4C8DFF" stroke-width="1.8" stroke-linecap="round"><path d="M8.5 20v2.2M12 20.4v2.2M15.5 20v2.2"/></g>',
+  showers: () => ICON_ART.cloudy() + '<g stroke="#4C8DFF" stroke-width="1.8" stroke-linecap="round"><path d="M9 20.2l-.8 2M13 20.2l-.8 2M17 20.2l-.8 2"/></g>',
+  sleet: () => ICON_ART.cloudy() + '<g stroke="#7fb0f5" stroke-width="1.7" stroke-linecap="round"><path d="M9 20.2v2.1M16 20.2v2.1"/></g><circle cx="12.5" cy="21.6" r="1.1" fill="#cfd9e4"/>',
+  snow: () => ICON_ART.cloudy() + '<g stroke="#cfd9e4" stroke-width="1.5" stroke-linecap="round"><path d="M8.6 20.3v2.2M7.6 20.9l2 1M9.6 20.9l-2 1M15.4 20.3v2.2M14.4 20.9l2 1M16.4 20.9l-2 1"/></g>',
+  storm: () => ICON_ART.cloudy() + '<path d="M12.8 19.4l-3.3 0 2.2 2.4-3 3.1" fill="none" stroke="#f6b943" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>',
+  hail: () => ICON_ART.cloudy() + '<path d="M12.8 19.4l-3.3 0 2.2 2.4-3 3.1" fill="none" stroke="#f6b943" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>'
+    + '<circle cx="16.5" cy="21.4" r="1.2" fill="#cfd9e4"/>'
+};
+
+/** An inline SVG for a WMO code. Returns '' for a code that never arrived. */
+function weatherIcon(code, isDay = true, size = 24) {
+  const group = wmoGroup(code);
+  if (!group) return '';
+  return `<svg class="wx" viewBox="0 0 24 26" width="${size}" height="${size}" role="img" aria-label="${wmoText(code)}">${ICON_ART[group](!!isDay)}</svg>`;
+}
+
+/**
+ * Where a day's high and low sit on a shared scale, as percentages, so every row in
+ * the seven-day list lines up against the same axis. Returns null when the week is
+ * flat enough that a bar would be meaningless.
+ */
+function rangeBar(lo, hi, min, max) {
+  if (![lo, hi, min, max].every(Number.isFinite)) return null;
+  const span = max - min;
+  if (span <= 0) return { x: 0, w: 100 };
+  const a = Math.min(lo, hi), b = Math.max(lo, hi);
+  // Width first, then the offset that fits it. Clamping the offset first lets the
+  // minimum width push the bar past the end of its own track.
+  const w = Math.min(100, Math.max(2, (b - a) / span * 100));
+  const x = Math.max(0, Math.min(100 - w, (a - min) / span * 100));
+  return { x, w };
+}
+
+/** The next `hours` quarter-day samples, from Open-Meteo's hourly block. */
+function hourlySlice(hourly, now = Date.now(), hours = 24) {
+  if (!hourly || !Array.isArray(hourly.time) || !hourly.time.length) return [];
+  const nowS = now / 1000;
+  let start = hourly.time.findIndex(t => t + 3600 > nowS);
+  if (start < 0) return [];
+  const out = [];
+  for (let i = start; i < Math.min(hourly.time.length, start + hours); i++) {
+    out.push({
+      time: hourly.time[i] * 1000,
+      temp: hourly.temperature_2m ? hourly.temperature_2m[i] : NaN,
+      code: hourly.weather_code ? hourly.weather_code[i] : NaN,
+      pop: hourly.precipitation_probability ? hourly.precipitation_probability[i] : NaN,
+      isDay: hourly.is_day ? !!hourly.is_day[i] : true
+    });
+  }
+  return out;
+}
+
+/** The daily block as rows, with the week's temperature range for the bars. */
+function dailyRows(daily, limit = 7) {
+  if (!daily || !Array.isArray(daily.time) || !daily.time.length) return { rows: [], min: NaN, max: NaN };
+  const n = Math.min(daily.time.length, limit);
+  const rows = [];
+  for (let i = 0; i < n; i++) {
+    rows.push({
+      time: daily.time[i] * 1000,
+      code: daily.weather_code ? daily.weather_code[i] : NaN,
+      hi: daily.temperature_2m_max ? daily.temperature_2m_max[i] : NaN,
+      lo: daily.temperature_2m_min ? daily.temperature_2m_min[i] : NaN,
+      pop: daily.precipitation_probability_max ? daily.precipitation_probability_max[i] : NaN,
+      precip: daily.precipitation_sum ? daily.precipitation_sum[i] : NaN
+    });
+  }
+  const temps = rows.flatMap(r => [r.hi, r.lo]).filter(Number.isFinite);
+  return { rows, min: temps.length ? Math.min(...temps) : NaN, max: temps.length ? Math.max(...temps) : NaN };
+}
+
+const fmtHour = ms => new Date(ms).toLocaleTimeString([], { hour: 'numeric' });
+const fmtDay = (ms, i) => i === 0 ? 'Today' : new Date(ms).toLocaleDateString([], { weekday: 'short' });
+
 /** Bulk shear reads in knots, the unit every severe-weather product uses. */
 const fmtKt = ms => Number.isFinite(ms) ? `${Math.round(ms / KT2MS)} kt` : '\u2013';
 const fmtSRH = v => Number.isFinite(v) ? `${Math.round(v)} m\u00b2/s\u00b2` : '\u2013';
