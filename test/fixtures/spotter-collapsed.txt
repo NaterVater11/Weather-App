@@ -1,0 +1,1 @@
+Object: 33.4484,-112.0740 Icon: 0,0,090,2,15, Icon: 0,0,000,6,10,"Collapsed Form\n2026-07-13 17:40:00 UTC\nCHASING\nWeb: https://example.com/collapsed" Text: 15, 10, 1, "Collapsed Form" End:

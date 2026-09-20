@@ -211,34 +211,60 @@ To add a model, add an entry to `MODELS` with `key`, `name`, `ids` (fallback ord
 
 ## Testing
 
-Syntax check the script and unit-test the pure functions with Node:
-- contouring accuracy
-- LCL
-- moist adiabats
-- tick spacing
-- barb markup
-- color interpolation
-- `boardsFor` against 40+ real cities, using the same `us-atlas` file
+The test suite runs on Node's built-in runner and needs no browser:
 
-UI testing uses Playwright with headless Chromium. It intercepts every network request and answers with synthetic data:
-- a moving storm field from the Open-Meteo mock
-- a fake NWS polygon
-- transparent tiles
-- local copies of Leaflet, topojson and the atlases
-- an intentional 400 for `ecmwf_ifs`, to exercise the model fallback
+```sh
+npm install   # test-only dependencies; the app itself still has none
+npm test
+```
 
-The page is served from a fake origin such as `http://isobar.test/`, not `file://`. Screenshots are taken at 390×844 (phone) and 1440×900 (desktop) for each field, the compare and sounding tabs, and the layers and forums panels. The suite also checks two failure cases: every CDN blocked, and a sandboxed iframe with outside data blocked.
+Isobar ships as one self-contained file with nothing to import, so `test/extract.mjs`
+lifts the pure functions straight out of `isobar.html` by name. Nothing is added to the
+app for testing, and no copy anyone hosts carries a test hook. The extractor asserts the
+shape it relies on (top-level declarations starting at column 0), so reformatting the
+app breaks the tests loudly instead of silently testing stale code.
 
-Companion server tests:
-- The placefile parser runs on a fixture copied from the real feed's format, in both multi-line and collapsed form. It checks stale positions, bad coordinates, `javascript:` links, and that no contact details or notes leak through.
-- The YouTube mapping runs with a mocked API, including the quota-error path.
-- Every route is exercised against a local copy of the feed, including `--check`.
+`test/pure.test.mjs` covers the math behind the map:
+- marching-squares contouring, including saddles, NaN cells, and accuracy checks
+  against a linear ramp and a cone
+- bilinear interpolation and the nearest-neighbour fallback at NaN corners
+- the 3x upsample used before contouring isobars
+- LCL height, the dry adiabat below it, and pseudo-adiabatic ascent above it, checked
+  against the 125 m per degree rule of thumb and for step-size sensitivity
+- chart tick spacing, wind barb markup, and color-scale interpolation
 
-Browser tests for chasers:
-- the chaser layer, Live chasers tab, video player and jump-to-chaser, with mocked `/isobar/` routes
-- a Home Assistant-style copy at `/local/isobar.html` with no server, confirming it shows setup guidance and never requests anything from Home Assistant but the page itself
+`test/boards.test.mjs` runs `boardsFor` against **68 real cities** using the same
+`us-atlas` states file the app fetches, covering every rule in the table: all nine split
+states in both directions, the territories, open water, and the pre-atlas cold start.
 
-**All testing so far has used mocked data.** Run `node isobar-relay.mjs --check` first to confirm the live feed still parses. When anything misbehaves against the live services, look first at how each service formats its responses.
+`test/relay.test.mjs` covers the companion server:
+- the placefile parser in multi-line and collapsed form, with stale, future-dated and
+  bad-coordinate positions, `javascript:` and `ftp:` links, and escaped quotes
+- **that no contact detail reaches the output.** This is asserted against the whole
+  serialized payload and against the exact set of published keys, so a field added
+  later cannot slip through
+- the YouTube mapping with a mocked API, including entity decoding and the quota error
+- every route against a live child process, the 60-second cache, the 502 path, and
+  that nothing outside `/isobar/` is served
+- `--check`
+
+`test/syntax.test.mjs` parses both files and enforces the invariants in the development
+notes below: the global `[hidden]` rule, no local `L`, routes confined to `/isobar/`,
+no runtime dependencies in the relay, pinned CDN versions, no committed keys, and that
+the model table above matches the models the app ships.
+
+The suite has been mutation-checked: deleting the `[hidden]` rule, shadowing `L`,
+shifting a state's latitude split, accepting any URL scheme, publishing the raw tooltip,
+keeping stale positions, skipping coordinate validation, breaking the RK2 midpoint and
+moving the 50-knot barb threshold are each caught by a failing test.
+
+**Not yet written.** There is no browser coverage: the Playwright screenshot suite, the
+mocked-network UI tests, the chaser layer and video player tests, and the Home
+Assistant-hosted-copy test all remain to be built. Nothing currently checks rendering,
+layout or any DOM behaviour. **All testing still uses mocked or fixture data** -- run
+`node isobar-relay.mjs --check` to confirm the live feed still parses, and when
+something misbehaves against the live services, look first at how each service formats
+its responses.
 
 ## Development notes
 
@@ -251,6 +277,7 @@ Browser tests for chasers:
 - Keep companion server routes under `/isobar/`, and only have the app assume a same-origin server when it's served from `/` or `/isobar.html`. Both protect a Home Assistant-hosted copy.
 - Never pass Spotter Network contact fields through the companion server.
 - Re-run the screenshot suite after UI changes and look at the phone shots first. Most use is on the phone.
+- `contourSegments` treats its level range as open at both ends: a level exactly equal to a cell's minimum is skipped by the guard, and at the maximum no corner tests strictly greater, so the cell classifies as empty. Pressure arrives as floats, so a 4 mb isobar effectively never lands on a sample value and no line is lost in practice. It does mean an integer-valued test field gets no contour at an integer level. Changing the corner test to `>=` (and the guard to `lev < mn`) would close it; a test pins the current behaviour so the change would have to be deliberate.
 
 ## Next up
 

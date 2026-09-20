@@ -1,0 +1,49 @@
+; Spotter Network GRLevelX placefile -- shape copied from the live feed.
+; Timestamps are fixed so tests can pin "now" instead of racing the clock.
+Threshold: 999
+Title: Spotter Network Positions
+
+Object: 35.1800,-97.4400
+Threshold: 999
+Icon: 0,0,177,2,15,
+Icon: 0,0,000,6,10,"Moving Chaser\n2026-07-13 17:58:52 UTC\nCHASING\nPhone: 555-867-5309\nEmail: chaser@example.com\nWeb: https://example.com/moving"
+Text: 15, 10, 1, "Moving Chaser"
+End:
+
+Object: 32.7767,-96.7970
+Icon: 0,0,000,6,10,"Stationary Chaser\n2026-07-13 17:30:00 UTC\nSTATIONARY\nNotes: parked at the truck stop, will head north later"
+Text: 15, 10, 1, "Stationary Chaser"
+End:
+
+Object: 41.2565,-95.9345
+Icon: 0,0,000,6,10,"Edge Of Window\n2026-07-13 16:10:00 UTC\nSTATIONARY"
+End:
+
+Object: 39.7392,-104.9903
+Icon: 0,0,000,6,10,"Too Old\n2026-07-13 15:00:00 UTC\nCHASING\nWeb: https://example.com/old"
+End:
+
+Object: 44.9778,-93.2650
+Icon: 0,0,000,6,10,"From The Future\n2026-07-13 18:15:00 UTC\nCHASING"
+End:
+
+Object: 999.0000,-97.0000
+Icon: 0,0,000,6,10,"Bad Latitude\n2026-07-13 17:55:00 UTC\nCHASING"
+End:
+
+Object: 35.4676,-97.5164
+Icon: 0,0,000,6,10,"Script Link\n2026-07-13 17:55:00 UTC\nCHASING\nWeb: javascript:alert(document.cookie)"
+End:
+
+Object: 36.1540,-95.9928
+Icon: 0,0,000,6,10,"Ftp Link\n2026-07-13 17:50:00 UTC\nCHASING\nWeb: ftp://example.com/files"
+End:
+
+Object: 30.2672,-97.7431
+Icon: 0,0,000,6,10,"Quoted \"Nickname\" Chaser\n2026-07-13 17:45:00 UTC\nREPORTING\nIM: someone@chat.example\nWeb: http://example.com/plain"
+End:
+
+Object: 38.6270,-90.1994
+Icon: 0,0,145,2,15,
+Text: 15, 10, 1, "No Tooltip"
+End:
