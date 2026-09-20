@@ -2373,7 +2373,12 @@ const cToF = c => c * 9 / 5 + 32;
 // the way to whatever the reader picked.
 const fmtTemp = c => Number.isFinite(c) ? `${fmtQty('temp', cToF(c), false)}°` : '–';
 const fmtSpeedKt = kt => fmtQty('speed', Number.isFinite(kt) ? kt * KT2MPH : NaN);
-const fmtClock = d => d ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '–';
+// Times are shown in the spot's local time, not the reader's. Looking up tomorrow in
+// Tulsa from a sofa in London should give Tulsa's sunrise, on Tulsa's calendar.
+// Shifting the instant and then formatting as UTC gives that wall clock without a
+// timezone library, while keeping the reader's 12 or 24 hour preference.
+const shifted = (ms, offsetSec) => new Date(ms + (offsetSec || 0) * 1000);
+const fmtClock = (d, off) => d ? shifted(+d, off).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' }) : '–';
 const fmtDur = ms => `${Math.floor(ms / 3600000)} h ${Math.round(ms % 3600000 / 60000)} m`;
 
 // api.weather.gov names the nearest town for any US point. Everywhere else keeps
@@ -2423,7 +2428,7 @@ async function loadNow() {
     minutely_15: 'precipitation',
     hourly: 'temperature_2m,weather_code,precipitation_probability,is_day',
     daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,uv_index_max',
-    forecast_days: 7, timeformat: 'unixtime', wind_speed_unit: 'kn'
+    forecast_days: 7, timeformat: 'unixtime', wind_speed_unit: 'kn', timezone: 'auto'
   })).then(r => r.json());
   const air = fetch('https://air-quality-api.open-meteo.com/v1/air-quality?' + qs({
     ...coords,
@@ -2451,6 +2456,7 @@ async function loadNow() {
 function renderNow(pt, w, a) {
   const box = $('#tabNow');
   const c = w.current;
+  const tz = Number.isFinite(w.utc_offset_seconds) ? w.utc_offset_seconds : 0;
   const cast = w.minutely_15 ? nowcast(w.minutely_15.time, w.minutely_15.precipitation) : null;
   const sun = sunTimes(new Date(), pt.lat, normLon(pt.lon));
   const moon = moonPhase(new Date());
@@ -2463,7 +2469,7 @@ function renderNow(pt, w, a) {
 
   const sunRow = sun.polar === 'day' ? 'The sun stays up all day here right now.'
     : sun.polar === 'night' ? 'The sun stays down all day here right now.'
-    : `Sunrise ${fmtClock(sun.sunrise)} · Sunset ${fmtClock(sun.sunset)} · ${fmtDur(sun.dayLength)} of daylight`;
+    : `Sunrise ${fmtClock(sun.sunrise, tz)} · Sunset ${fmtClock(sun.sunset, tz)} · ${fmtDur(sun.dayLength)} of daylight`;
 
   box.innerHTML = `
     <div class="now-head">
@@ -2486,7 +2492,7 @@ function renderNow(pt, w, a) {
     </div>
     ${hours.length ? `<h3 class="sub">Next 24 hours</h3>
     <div class="hourly">${hours.map(h => `<div>
-      <span>${esc(fmtHour(h.time))}</span>
+      <span>${esc(fmtHour(h.time, tz))}</span>
       ${weatherIcon(h.code, h.isDay, 22)}
       <b>${fmtTemp(h.temp)}</b>
       <i>${Number.isFinite(h.pop) && h.pop >= 20 ? Math.round(h.pop) + '%' : ''}</i>
@@ -2495,7 +2501,7 @@ function renderNow(pt, w, a) {
     <div class="daily">${week.rows.map((r, i) => {
       const bar = rangeBar(r.lo, r.hi, week.min, week.max);
       return `<div class="drow">
-        <span class="dname">${esc(fmtDay(r.time, i))}</span>
+        <span class="dname">${esc(fmtDay(r.time, i, tz))}</span>
         ${weatherIcon(r.code, true, 22)}
         <i class="dpop">${Number.isFinite(r.pop) && r.pop >= 20 ? Math.round(r.pop) + '%' : ''}</i>
         <b class="dlo">${fmtTemp(r.lo)}</b>
@@ -2506,9 +2512,9 @@ function renderNow(pt, w, a) {
     <div class="sunmoon">
       <div class="moon">${moonSVG(moon.phase)}<div><b>${esc(moon.name)}</b><span>${Math.round(moon.illum * 100)}% lit · day ${Math.round(moon.age)} of ${Math.round(SYNODIC)}</span></div></div>
       <p class="fine">${esc(sunRow)}</p>
-      ${sun.polar ? '' : `<p class="fine">First light ${fmtClock(sun.dawn)} · Golden hour ends ${fmtClock(sun.goldenEnd)} · Golden hour returns ${fmtClock(sun.goldenStart)} · Last light ${fmtClock(sun.dusk)}</p>`}
+      ${sun.polar ? '' : `<p class="fine">First light ${fmtClock(sun.dawn, tz)} · Golden hour ends ${fmtClock(sun.goldenEnd, tz)} · Golden hour returns ${fmtClock(sun.goldenStart, tz)} · Last light ${fmtClock(sun.dusk, tz)}</p>`}
     </div>
-    <p class="fine">Conditions blend Open-Meteo's best available models for this spot, not the model selected on the map.</p>`;
+    <p class="fine">Conditions blend Open-Meteo's best available models for this spot, not the model selected on the map. Times are this spot's local time${tz === new Date().getTimezoneOffset() * -60 ? '' : ', which is not yours'}.</p>`;
   box.dataset.ok = '1';
 }
 
@@ -2616,8 +2622,8 @@ function dailyRows(daily, limit = 7) {
   return { rows, min: temps.length ? Math.min(...temps) : NaN, max: temps.length ? Math.max(...temps) : NaN };
 }
 
-const fmtHour = ms => new Date(ms).toLocaleTimeString([], { hour: 'numeric' });
-const fmtDay = (ms, i) => i === 0 ? 'Today' : new Date(ms).toLocaleDateString([], { weekday: 'short' });
+const fmtHour = (ms, off) => shifted(ms, off).toLocaleTimeString([], { hour: 'numeric', timeZone: 'UTC' });
+const fmtDay = (ms, i, off) => i === 0 ? 'Today' : shifted(ms, off).toLocaleDateString([], { weekday: 'short', timeZone: 'UTC' });
 
 /** Bulk shear reads in knots, the unit every severe-weather product uses. */
 const fmtKt = ms => Number.isFinite(ms) ? `${Math.round(ms / KT2MS)} kt` : '\u2013';

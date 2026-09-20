@@ -25,7 +25,7 @@ Map fields: temperature, future radar (HRRR only), hourly precipitation, total p
 **Observed layers** (Layers button): live NEXRAD radar looping the last 50 minutes, active NWS warning polygons (tap for details, refreshed every 2 minutes), GOES-East infrared satellite, and MRMS 24-hour rain totals. Pressure lines and wind barbs can also be laid over any field.
 
 **Tap any spot** to open the point panel. US points are named after the nearest town; everywhere else keeps coordinates.
-- *Now* is the everyday view: temperature and feels-like, wind and gusts, humidity, UV, and a precipitation nowcast that says when rain starts or stops rather than giving a daily percentage. Below that are the next 24 hours and a seven-day forecast, each row showing its conditions, chance of rain and a temperature bar drawn against the week's own range. Icons are drawn in the page, so they still appear with every CDN blocked. Below that sit US air quality with the pollutant driving it, sunrise, sunset, civil twilight, golden hour and day length, and the moon's phase and illumination. Sun and moon are computed on the spot with no network call at all. These conditions blend Open-Meteo's best available models, not the model selected on the map.
+- *Now* is the everyday view: temperature and feels-like, wind and gusts, humidity, UV, and a precipitation nowcast that says when rain starts or stops rather than giving a daily percentage. Below that are the next 24 hours and a seven-day forecast, each row showing its conditions, chance of rain and a temperature bar drawn against the week's own range. Icons are drawn in the page, so they still appear with every CDN blocked. Every time on this tab is the spot's own local time, not yours, and it says so when the two differ. Below that sit US air quality with the pollutant driving it, sunrise, sunset, civil twilight, golden hour and day length, and the moon's phase and illumination. Sun and moon are computed on the spot with no network call at all. These conditions blend Open-Meteo's best available models, not the model selected on the map.
 - *Compare* fetches all nine models for that spot. It shows a table (total precip, total snow, high, low, peak gust) and overlaid charts for temperature, precipitation, snow and gusts. Tap a model chip to hide or show its line. A white marker tracks the map's current time.
 - *Sounding* draws a Skew-T for the selected model and hour from 21 pressure levels (1000 to 100 mb). It includes dry and moist adiabats, a lifted surface parcel, wind barbs, and stats for surface temp/dew point, CAPE, precipitable water and cloud base.
 - Below the Skew-T is a *hodograph*, coloured by height, with 0-1 and 0-6 km bulk shear, 0-1 and 0-3 km storm-relative helicity, and the Bunkers right-mover storm motion the helicity is measured against. A profile that stops short of 6 km reports what it can and leaves the rest blank rather than extrapolating.
@@ -237,7 +237,7 @@ To add a model, add an entry to `MODELS` with `key`, `name`, `ids` (fallback ord
 
 ```sh
 npm install   # test-only dependencies; the app itself still has none
-npm test      # 237 tests, no browser, about a second
+npm test      # 246 tests, no browser, about a second
 npm run mutate
 ```
 
@@ -303,7 +303,7 @@ handled by `showTab`, and every host the app fetches from is on the key-free lis
 
 `npm run mutate` breaks the app on purpose, one edit at a time, and checks that a test
 fails each time -- an inverted helicity sign, a shifted state boundary, a dropped guard,
-a leaked contact field. **All 51 mutations are currently caught.** The harness refuses a
+a leaked contact field. **All 53 mutations are currently caught.** The harness refuses a
 mutation whose pattern is missing or whose edit changes nothing, because a no-op
 mutation "passes" for the wrong reason and silently overstates the coverage. It backs
 the originals up outside the tree, so an interrupted run cannot leave the repo mutated.
@@ -331,6 +331,10 @@ service formats its responses.
 - Keep it one self-contained file with no framework, no build step and no keys. That's what makes it drop-in hostable anywhere, including Home Assistant.
 - Keep the global `[hidden]{display:none!important}` rule. Without it, component `display` rules override the `hidden` attribute and panels or spinners never disappear.
 - Never name a local variable `L`; that's Leaflet.
+- Conditions are fetched with `timezone: 'auto'` and every label on that tab is
+  formatted in the spot's own time, by shifting the instant and formatting it as UTC.
+  Without it a daily high covers a GMT day, which for the US runs roughly 6pm to 6pm,
+  and "tomorrow" in Tulsa is labelled from the reader's calendar.
 - Weather icons are drawn in `ICON_ART`, never fetched. A test walks the whole WMO table
   and fails if a code has text but no picture, or the other way round.
 - Look up a key from outside with `owns(table, key)`, never `table[key]`. A plain lookup

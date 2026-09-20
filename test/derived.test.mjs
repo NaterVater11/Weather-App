@@ -709,3 +709,82 @@ test('the week always fits its own bars', () => {
     assert.ok(b && b.x >= 0 && b.x + b.w <= 100.0001, `${r.lo}-${r.hi} does not fit`);
   }
 });
+
+/* ------------------------------------------------------------------ */
+/* Local time at the spot                                              */
+/* ------------------------------------------------------------------ */
+// Looking up tomorrow in Tulsa from a sofa in London should give Tulsa's sunrise, on
+// Tulsa's calendar. Everything in the conditions tab is formatted in the spot's own
+// time, not the reader's, by shifting the instant and formatting it as UTC.
+
+const tz = await load(['shifted', 'fmtClock', 'fmtHour', 'fmtDay']);
+
+test('shifted: moves an instant by a whole offset', () => {
+  const base = Date.UTC(2026, 5, 1, 12, 0, 0);
+  assert.equal(+tz.shifted(base, 0), base);
+  assert.equal(+tz.shifted(base, -6 * 3600), base - 6 * 3600000, 'six hours behind');
+  assert.equal(+tz.shifted(base, 5.5 * 3600), base + 5.5 * 3600000, 'a half-hour zone');
+  assert.equal(+tz.shifted(base, 45 * 60), base + 45 * 60000, 'a quarter-hour zone');
+});
+
+test('shifted: a missing offset is no offset, not NaN', () => {
+  const base = Date.UTC(2026, 5, 1, 12, 0, 0);
+  for (const off of [undefined, null, 0, NaN]) {
+    const out = +tz.shifted(base, off);
+    assert.ok(Number.isFinite(out), `offset ${off} produced an invalid date`);
+  }
+  assert.equal(+tz.shifted(base, undefined), base);
+});
+
+test('fmtClock: reads the spot clock, not the machine clock', () => {
+  // 12:00 UTC is 06:00 in Tulsa in summer and 13:00 in London.
+  const noonUTC = new Date(Date.UTC(2026, 5, 1, 12, 0, 0));
+  const tulsa = tz.fmtClock(noonUTC, -5 * 3600);
+  const london = tz.fmtClock(noonUTC, 1 * 3600);
+  assert.match(tulsa, /\b7\b/, `expected 7 o'clock in Tulsa, got "${tulsa}"`);
+  assert.match(london, /\b13\b|\b1\b/, `expected 1 pm in London, got "${london}"`);
+  assert.notEqual(tulsa, london, 'two zones must not read the same');
+});
+
+test('fmtClock: the same instant in two zones differs by the offset', () => {
+  const t = new Date(Date.UTC(2026, 0, 15, 18, 30, 0));
+  assert.equal(tz.fmtClock(t, 0), tz.fmtClock(t, 24 * 3600), 'a whole day apart reads the same');
+  assert.notEqual(tz.fmtClock(t, 0), tz.fmtClock(t, 3600));
+});
+
+test('fmtClock: a missing time is a dash', () => {
+  assert.equal(tz.fmtClock(null, 0), '–');
+  assert.equal(tz.fmtClock(undefined, -18000), '–');
+});
+
+test('fmtDay: the calendar rolls on the spot clock', () => {
+  // 02:00 UTC on the 2nd is still the evening of the 1st five hours west.
+  const ms = Date.UTC(2026, 5, 2, 2, 0, 0);
+  const west = tz.fmtDay(ms, 1, -5 * 3600);
+  const utc = tz.fmtDay(ms, 1, 0);
+  assert.notEqual(west, utc, 'the two zones are on different days');
+  assert.match(utc, /Tue/);
+  assert.match(west, /Mon/);
+});
+
+test('fmtDay: the first row is always Today, whatever the zone', () => {
+  const ms = Date.UTC(2026, 5, 2, 2, 0, 0);
+  for (const off of [-43200, -18000, 0, 3600, 50400]) {
+    assert.equal(tz.fmtDay(ms, 0, off), 'Today');
+  }
+});
+
+test('fmtHour: follows the spot clock too', () => {
+  const ms = Date.UTC(2026, 5, 1, 12, 0, 0);
+  assert.notEqual(tz.fmtHour(ms, 0), tz.fmtHour(ms, -5 * 3600));
+  assert.equal(tz.fmtHour(ms, 0), tz.fmtHour(ms, 0));
+});
+
+test('local time formatting never produces an invalid date', () => {
+  const ms = Date.UTC(2026, 5, 1, 12, 0, 0);
+  for (const off of [-50400, -43200, -18000, -1800, 0, 1800, 19800, 45900, 50400]) {
+    for (const out of [tz.fmtHour(ms, off), tz.fmtDay(ms, 1, off), tz.fmtClock(new Date(ms), off)]) {
+      assert.ok(out && !/Invalid/.test(out), `offset ${off} produced "${out}"`);
+    }
+  }
+});

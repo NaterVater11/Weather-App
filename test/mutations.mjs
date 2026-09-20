@@ -95,6 +95,13 @@ const MUTATIONS = [
     "v: 'wind_gusts_10m', kind: 'speed'", "v: 'wind_gusts_10m', kind: 'velocity'"],
   ['units: chart span converted as a value, not a difference', APP, 'test/pure.test.mjs',
     'const zero = conv(0), minSpanD = Math.abs(conv(minSpan) - zero);', 'const minSpanD = minSpan;'],
+  // --- local time at the spot ---
+  ['time: labels fall back to the reader clock', APP, 'test/derived.test.mjs',
+    "const shifted = (ms, offsetSec) => new Date(ms + (offsetSec || 0) * 1000);",
+    'const shifted = ms => new Date(ms);'],
+  ['time: the day label ignores the offset', APP, 'test/derived.test.mjs',
+    "const fmtDay = (ms, i, off) => i === 0 ? 'Today' : shifted(ms, off).toLocaleDateString([], { weekday: 'short', timeZone: 'UTC' });",
+    "const fmtDay = (ms, i) => i === 0 ? 'Today' : new Date(ms).toLocaleDateString([], { weekday: 'short' });"],
   // --- request cache ---
   ['cache: never expires anything', APP, 'test/pure.test.mjs',
     'if (Date.now() - hit.at > ttlMs) { map.delete(key); return undefined; }', 'if (false) { return undefined; }'],
