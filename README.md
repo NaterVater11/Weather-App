@@ -71,9 +71,25 @@ Notes:
 - The location button needs HTTPS, so it works through a remote HTTPS address but not over plain `http://homeassistant.local`.
 - Home Assistant caches `/local/` files. After replacing the file, add a version to the URL (`isobar.html?v=2`) or clear the browser cache.
 
+### GitHub Pages (best for the phone, no Mac needed)
+
+`.github/workflows/pages.yml` runs the tests and publishes the app on every push to
+`main`. It copies `isobar.html` to `index.html`, so the bare address opens it and
+**Add to Home Screen** behaves like an app. Pages serves over HTTPS, so the location
+button works there.
+
+**Pages has to be switched on once by hand**, by someone with admin on the repo:
+Settings → Pages → Build and deployment → Source: **GitHub Actions**. The Actions
+token cannot do it itself (`Resource not accessible by integration`), so until that is
+done the workflow still runs the tests and skips publishing with a warning. Once it is
+on, the next push publishes to `https://<user>.github.io/Weather-App/`.
+
+Storm chasers and live streams do not work from a Pages copy: an HTTPS page cannot call
+an `http://` companion server. Everything else does.
+
 ### Anywhere else
 
-Any static host works: GitHub Pages, Netlify, Cloudflare Pages, nginx on the Mac mini. There's nothing to configure.
+Any static host works: Netlify, Cloudflare Pages, nginx on the Mac mini. There's nothing to configure.
 
 ### Companion server (storm chasers and live streams)
 

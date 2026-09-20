@@ -1,14 +1,20 @@
-# Publishes Isobar to GitHub Pages so it can be opened on a phone.
+# Runs the suite on every push, and publishes Isobar to GitHub Pages.
 #
 # The app is one self-contained file, so there is nothing to build: the job copies
 # isobar.html to index.html (so the bare address opens it) and uploads that.
-# Tests run first, and a red suite stops the deploy.
+#
+# Pages has to be switched on once by hand, by someone with admin on the repo:
+#   Settings -> Pages -> Build and deployment -> Source: GitHub Actions
+# The Actions token cannot do it ("Resource not accessible by integration"), so until
+# that switch is flipped the deploy is skipped with a warning rather than failing the
+# run. Once it is on, the next push publishes.
 
-name: Deploy to Pages
+name: Test and deploy
 
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -31,28 +37,44 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - run: npm test
-      - run: npm run mutate
+      - name: Unit tests
+        run: npm test
+      - name: Mutation harness
+        run: npm run mutate
 
   deploy:
     needs: test
+    # Pull requests from forks cannot deploy, and should not.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
-        with:
-          enablement: true
+
+      - id: pages
+        uses: actions/configure-pages@v5
+        continue-on-error: true
+
+      - name: Say how to turn Pages on
+        if: steps.pages.outcome != 'success'
+        run: |
+          echo "::warning title=GitHub Pages is not enabled::Open Settings -> Pages, set Source to 'GitHub Actions', then re-run this workflow. The tests above all passed; only publishing was skipped."
+
       - name: Assemble the site
+        if: steps.pages.outcome == 'success'
         run: |
           mkdir -p _site
           cp isobar.html _site/index.html
           cp isobar.html _site/isobar.html
           touch _site/.nojekyll
+
       - uses: actions/upload-pages-artifact@v3
+        if: steps.pages.outcome == 'success'
         with:
           path: _site
+
       - id: deployment
+        if: steps.pages.outcome == 'success'
         uses: actions/deploy-pages@v4
