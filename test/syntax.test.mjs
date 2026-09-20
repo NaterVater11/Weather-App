@@ -96,3 +96,68 @@ test('README documents every model the app ships', async () => {
     assert.ok(readme.includes(n), `model "${n}" is not in the README table`);
   }
 });
+
+/* ------------------------------------------------------------------ */
+/* Markup wiring                                                       */
+/* ------------------------------------------------------------------ */
+// There is no browser coverage yet, so these stand in for the class of bug a
+// screenshot would catch instantly: a selector pointing at an element that is not
+// there. A mistyped id fails silently at runtime -- the button simply does nothing.
+
+test('every $("#id") in the script points at an id that exists', () => {
+  const refs = new Set([...script.matchAll(/\$\$?\('#([A-Za-z][\w-]*)/g)].map(m => m[1]));
+  const defined = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]));
+  assert.ok(refs.size > 20, `expected to find the selectors, found ${refs.size}`);
+  const missing = [...refs].filter(r => !defined.has(r));
+  assert.deepEqual(missing, [], `these selectors match nothing: ${missing.join(', ')}`);
+});
+
+test('every tab has the panel it claims to control', () => {
+  const tabs = [...html.matchAll(/role="tab"[^>]*aria-controls="([^"]+)"/g)].map(m => m[1]);
+  const panels = [...html.matchAll(/role="tabpanel"[^>]*id="([^"]+)"|id="([^"]+)"[^>]*role="tabpanel"/g)]
+    .map(m => m[1] || m[2]);
+  assert.ok(tabs.length >= 5, `expected the tab lists, found ${tabs.length}`);
+  for (const t of tabs) assert.ok(panels.includes(t), `tab controls "${t}", which is not a tabpanel`);
+  for (const p of panels) assert.ok(tabs.includes(p), `tabpanel "${p}" has no tab`);
+});
+
+test('every data-tab button is handled by showTab', () => {
+  // A tab whose panel showTab never unhides would open to a blank sheet.
+  const buttons = [...html.matchAll(/data-tab="([^"]+)"/g)].map(m => m[1]);
+  assert.deepEqual([...new Set(buttons)].sort(), ['compare', 'now', 'sounding']);
+  const body = script.slice(script.indexOf('function showTab('));
+  for (const t of buttons) {
+    assert.ok(body.includes(`tab !== '${t}'`), `showTab never hides the "${t}" panel`);
+  }
+});
+
+test('the point panel tabs and the remembered tab agree', () => {
+  // state.tab is restored from localStorage; a value showTab cannot handle would
+  // leave the panel stuck on an invisible tab.
+  const stored = script.match(/tab: \[([^\]]+)\]\.includes\(store\.get\('tab'\)\)/);
+  assert.ok(stored, 'the remembered tab should be validated against a list');
+  const allowed = stored[1].split(',').map(s => s.trim().replace(/'/g, '')).sort();
+  const buttons = [...new Set([...html.matchAll(/data-tab="([^"]+)"/g)].map(m => m[1]))].sort();
+  assert.deepEqual(allowed, buttons, 'the allowed tabs and the tab buttons have drifted apart');
+});
+
+test('every data source the app fetches from is key-free', () => {
+  // The whole premise is that Isobar needs no accounts. Any new data endpoint has to
+  // hold that line; the one keyed service (YouTube) stays behind the companion server.
+  // Only fetched hosts matter here -- outbound links to chaser sites are not requests.
+  const fetched = new Set([...script.matchAll(/fetch\(\s*`?'?https:\/\/([a-z0-9.-]+)/g)].map(m => m[1]));
+  const allowed = new Set([
+    'api.open-meteo.com',              // models, point forecasts, soundings, conditions
+    'air-quality-api.open-meteo.com',  // US AQI
+    'geocoding-api.open-meteo.com',    // place search
+    'api.weather.gov',                 // warnings and place names
+    'mesonet.agron.iastate.edu',       // radar, satellite, MRMS
+    'cdn.jsdelivr.net'                 // the state and country shapes
+  ]);
+  assert.ok(fetched.size >= 5, `expected to find the data sources, found ${fetched.size}`);
+  for (const h of fetched) {
+    assert.ok(allowed.has(h), `the app fetches from a new host, ${h}: confirm it needs no key`);
+  }
+  assert.ok(!/[?&]key=/.test(script), 'the app itself must never send an API key');
+  assert.ok(!/[?&]appid=/i.test(script), 'the app itself must never send an API key');
+});

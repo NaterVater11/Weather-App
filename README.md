@@ -24,9 +24,11 @@ Map fields: temperature, future radar (HRRR only), hourly precipitation, total p
 
 **Observed layers** (Layers button): live NEXRAD radar looping the last 50 minutes, active NWS warning polygons (tap for details, refreshed every 2 minutes), GOES-East infrared satellite, and MRMS 24-hour rain totals. Pressure lines and wind barbs can also be laid over any field.
 
-**Tap any spot** to open the point panel:
-- *Compare models* fetches all nine models for that spot. It shows a table (total precip, total snow, high, low, peak gust) and overlaid charts for temperature, precipitation, snow and gusts. Tap a model chip to hide or show its line. A white marker tracks the map's current time.
+**Tap any spot** to open the point panel. US points are named after the nearest town; everywhere else keeps coordinates.
+- *Now* is the everyday view: temperature and feels-like, wind and gusts, humidity, UV, and a precipitation nowcast that says when rain starts or stops rather than giving a daily percentage. Below that sit US air quality with the pollutant driving it, sunrise, sunset, civil twilight, golden hour and day length, and the moon's phase and illumination. Sun and moon are computed on the spot with no network call at all. These conditions blend Open-Meteo's best available models, not the model selected on the map.
+- *Compare* fetches all nine models for that spot. It shows a table (total precip, total snow, high, low, peak gust) and overlaid charts for temperature, precipitation, snow and gusts. Tap a model chip to hide or show its line. A white marker tracks the map's current time.
 - *Sounding* draws a Skew-T for the selected model and hour from 21 pressure levels (1000 to 100 mb). It includes dry and moist adiabats, a lifted surface parcel, wind barbs, and stats for surface temp/dew point, CAPE, precipitable water and cloud base.
+- Below the Skew-T is a *hodograph*, coloured by height, with 0-1 and 0-6 km bulk shear, 0-1 and 0-3 km storm-relative helicity, and the Bunkers right-mover storm motion the helicity is measured against. A profile that stops short of 6 km reports what it can and leaves the rest blank rather than extrapolating.
 - The panel header links to that spot's American Weather forum.
 
 **Storm chasers** (Layers, needs the companion server): live positions from Spotter Network, refreshed every minute.
@@ -39,7 +41,7 @@ Map fields: temperature, future radar (HRRR only), hourly precipitation, total p
 
 **Regional forums:** the nine regional boards on americanwx.com. The board covering the map center, or the spot you tapped, is shown first. Split areas show both boards, for example southern Virginia (Southeastern States and Mid Atlantic) or southern Kentucky (Tennessee Valley and Lakes/Ohio Valley). Boards open in a new tab.
 
-**Also:** place search, a "my location" button, a hover readout on desktop, and keyboard shortcuts (space to play or pause, left and right arrows to step, Esc to close panels). Model, field, opacity, detail level, layers, map view and hidden chart lines are remembered in the browser. The map reloads data every 20 minutes when it isn't playing.
+**Also:** place search, saved places (the star in the point panel; an empty search box lists them), a "my location" button, a hover readout on desktop, and keyboard shortcuts (space to play or pause, left and right arrows to step, Esc to close panels). Model, field, opacity, detail level, layers, map view, saved places, the open point-panel tab and hidden chart lines are remembered in the browser. The map reloads data every 20 minutes when it isn't playing.
 
 ## Running it
 
@@ -135,11 +137,14 @@ Loaded at runtime:
 | Open-Meteo | Model grids, point forecasts, soundings | `api.open-meteo.com/v1/forecast` |
 | Open-Meteo | Model run times | `api.open-meteo.com/data/{model}/static/meta.json` |
 | Open-Meteo | Place search | `geocoding-api.open-meteo.com/v1/search` |
+| Open-Meteo | Current conditions and the quarter-hourly nowcast | `api.open-meteo.com/v1/forecast` |
+| Open-Meteo | US air quality | `air-quality-api.open-meteo.com/v1/air-quality` |
 | Iowa Environmental Mesonet | Live radar tiles (`nexrad-n0q-900913`, 5-minute frames) | `mesonet.agron.iastate.edu/cache/tile.py/1.0.0/` |
 | Iowa Environmental Mesonet | HRRR future radar tiles (`hrrr::REFP-F{min}-{YYYYMMDDHH00}`) | same tile service |
 | Iowa Environmental Mesonet | Latest HRRR run for future radar | `mesonet.agron.iastate.edu/data/gis/images/4326/hrrr/refd_1080.json` |
 | Iowa Environmental Mesonet | GOES-East IR (`conus_ch13`), MRMS 24 h (`mrms_p24h`) | WMS: `cgi-bin/wms/goes_east.cgi`, `cgi-bin/wms/us/mrms_nn.cgi` |
 | National Weather Service | Warning polygons | `api.weather.gov/alerts/active?status=actual` |
+| National Weather Service | Place name for a tapped US point | `api.weather.gov/points/{lat},{lon}` |
 | CARTO / OpenStreetMap | Basemap and labels | `basemaps.cartocdn.com` (`dark_nolabels`, `dark_only_labels`) |
 | American Weather | Regional forum links | `americanwx.com/bb/forum/…` |
 | Spotter Network | Chaser positions (companion server) | `spotternetwork.org/feeds/gr.txt` (GRLevelX placefile) |
@@ -191,6 +196,11 @@ The app lives in `isobar.html`: CSS in `<style>`, markup, then one script wrappe
 | Storm chasers and live streams | `relayBase`, `relayJSON`, chaser markers, the Live chasers tab, video player, companion server setting |
 | Point forecast | Compare fetch, summary table, `chartSVG` |
 | Sounding | Skew-T drawing, parcel math |
+| Sun and moon | `sunTimes` (the sunrise equation), `moonPhase`, `moonName`, `moonSVG` |
+| Hodograph | `windProfile`, `windAt`, `bulkShear`, `meanWind`, `bunkersMotion`, `stormRelativeHelicity`, `severeParams`, `hodographSVG` |
+| Nowcast, air quality | `nowcast`, `aqiBand`, `dominantPollutant` |
+| Conditions tab | `WMO` codes, `reverseName`, `loadNow` |
+| Saved places | `placeKey`, `addPlace`, `removePlace`, `hasPlace`, `renderSaved` |
 | Search and location | Geocoding and geolocation |
 | Wiring | Event listeners, keyboard, refresh timers |
 
@@ -203,7 +213,10 @@ To add a model, add an entry to `MODELS` with `key`, `name`, `ids` (fallback ord
 - **US only:** HRRR, NAM and NBM. NBM has no sounding.
 - **Open-Meteo's free tier** is for non-commercial use only and capped at 10,000 calls per day (5,000 per hour, 600 per minute). Long or variable-heavy requests count as more than one call, and each map load asks for 110 to 320 locations. If Isobar says the free limit is used up, switch to Light detail. Using it for clients or in a paid product needs an Open-Meteo subscription.
 - **Compare totals** cover each model's full run, so HRRR's 48-hour total sits next to GFS's 10-day total. The note under the table says so.
-- **Tapped spots show coordinates,** not a place name. There's no free reverse-geocoding source in use yet.
+- **Place names are US only.** `api.weather.gov` names the nearest town for any US point; elsewhere a tapped spot keeps its coordinates, because no free worldwide reverse geocoder is in use.
+- **Air quality is US AQI.** Open-Meteo also publishes a European index and pollen, which aren't shown.
+- **Hodograph parameters come from model wind at pressure levels,** interpolated to height, not from a native model sounding. They track the real values closely but are not a substitute for SPC mesoanalysis on a chase day.
+- **The nowcast looks six hours ahead** and is quarter-hourly, so it says when rain starts, not which street it hits first.
 - **Forum threads aren't shown inside Isobar.** A web page can't read another site unless that site allows it, and forums generally don't. The companion server could add this (see below).
 - **Chasers need the companion server,** and only chasers who share their position through Spotter Network appear.
 - **Live streams aren't placed on the map.** YouTube streams carry no location, so they're listed rather than pinned. MyRadar's pinned chaser video comes from Severe Studios' licensed streaming API, which isn't free. The linked chaser sites show pinned video for free in a browser tab.
@@ -211,60 +224,72 @@ To add a model, add an entry to `MODELS` with `key`, `name`, `ids` (fallback ord
 
 ## Testing
 
-The test suite runs on Node's built-in runner and needs no browser:
-
 ```sh
 npm install   # test-only dependencies; the app itself still has none
-npm test
+npm test      # 154 tests, no browser, under a second
+npm run mutate
 ```
 
 Isobar ships as one self-contained file with nothing to import, so `test/extract.mjs`
 lifts the pure functions straight out of `isobar.html` by name. Nothing is added to the
 app for testing, and no copy anyone hosts carries a test hook. The extractor asserts the
-shape it relies on (top-level declarations starting at column 0), so reformatting the
-app breaks the tests loudly instead of silently testing stale code.
+shape it relies on and refuses any cut that swallows a second declaration, so
+reformatting the app breaks the tests loudly instead of silently testing stale code.
 
-`test/pure.test.mjs` covers the math behind the map:
-- marching-squares contouring, including saddles, NaN cells, and accuracy checks
-  against a linear ramp and a cone
-- bilinear interpolation and the nearest-neighbour fallback at NaN corners
-- the 3x upsample used before contouring isobars
-- LCL height, the dry adiabat below it, and pseudo-adiabatic ascent above it, checked
-  against the 125 m per degree rule of thumb and for step-size sensitivity
-- chart tick spacing, wind barb markup, and color-scale interpolation
+`test/pure.test.mjs` covers the math behind the map: marching-squares contouring
+including saddles, NaN cells and accuracy against a linear ramp and a cone; bilinear
+interpolation and its nearest-neighbour fallback; the 3x upsample used before contouring
+isobars; LCL height and pseudo-adiabatic ascent, checked against the 125 m per degree
+rule of thumb and for step-size sensitivity; chart ticks, wind barbs and colour scales.
+
+`test/derived.test.mjs` covers everything the Now tab and the hodograph rest on. Sun
+times are pinned against published sunrise and sunset for New York and London and hold
+to within two minutes; day length, the equinox, polar day and night, and the ordering of
+the twilight events are all checked. Helicity is pinned by its sign convention -- a
+mirrored profile must give the mirrored answer -- and by the fact that a straight
+hodograph has no helicity measured along itself but real helicity against a deviant
+storm motion, which is why supercells form on straight hodographs at all. Bunkers motion
+is checked for its 7.5 m/s deviation and for deviating to the *right* of the shear
+vector. The nowcast, the AQI bands and saved places are covered too.
 
 `test/boards.test.mjs` runs `boardsFor` against **66 real cities** using the same
 `us-atlas` states file the app fetches, covering every rule in the table: all nine split
 states in both directions, the territories, open water, and the pre-atlas cold start.
 
-`test/relay.test.mjs` covers the companion server:
-- the placefile parser in multi-line and collapsed form, with stale, future-dated and
-  bad-coordinate positions, `javascript:` and `ftp:` links, and escaped quotes
-- **that no contact detail reaches the output.** This is asserted against the whole
-  serialized payload and against the exact set of published keys, so a field added
-  later cannot slip through
-- the YouTube mapping with a mocked API, including entity decoding and the quota error
-- every route against a live child process, the 60-second cache, the 502 path, and
-  that nothing outside `/isobar/` is served
-- `--check`
+`test/relay.test.mjs` covers the companion server: the placefile parser in multi-line
+and collapsed form, with stale, future-dated and bad-coordinate positions, `javascript:`
+and `ftp:` links, and escaped quotes; **that no contact detail reaches the output**,
+asserted against the whole serialized payload and against the exact set of published
+keys, so a field added later cannot slip through; the YouTube mapping with a mocked API
+including the quota error; every route against a live child process, the 60-second
+cache, the 502 path, and that nothing outside `/isobar/` is served; and `--check`.
 
 `test/syntax.test.mjs` parses both files and enforces the invariants in the development
-notes below: the global `[hidden]` rule, no local `L`, routes confined to `/isobar/`,
-no runtime dependencies in the relay, pinned CDN versions, no committed keys, and that
-the model table above matches the models the app ships.
+notes below: the global `[hidden]` rule, no local `L`, routes confined to `/isobar/`, no
+runtime dependencies in the relay, pinned CDN versions, no committed keys, and that the
+model table above matches what the app ships. It also checks the markup wiring that a
+browser would otherwise have to catch: every `$('#id')` in the script resolves to an
+element that exists, every tab has the panel it claims to control, every tab button is
+handled by `showTab`, and every host the app fetches from is on the key-free list.
 
-The suite has been mutation-checked: deleting the `[hidden]` rule, shadowing `L`,
-shifting a state's latitude split, accepting any URL scheme, publishing the raw tooltip,
-keeping stale positions, skipping coordinate validation, breaking the RK2 midpoint and
-moving the 50-knot barb threshold are each caught by a failing test.
+### Mutation testing
+
+`npm run mutate` breaks the app on purpose, one edit at a time, and checks that a test
+fails each time -- an inverted helicity sign, a shifted state boundary, a dropped guard,
+a leaked contact field. **All 30 mutations are currently caught.** The harness refuses a
+mutation whose pattern is missing or whose edit changes nothing, because a no-op
+mutation "passes" for the wrong reason and silently overstates the coverage. It backs
+the originals up outside the tree, so an interrupted run cannot leave the repo mutated.
+
+Pass a substring to run one: `npm run mutate -- helicity`.
 
 **Not yet written.** There is no browser coverage: the Playwright screenshot suite, the
 mocked-network UI tests, the chaser layer and video player tests, and the Home
-Assistant-hosted-copy test all remain to be built. Nothing currently checks rendering,
-layout or any DOM behaviour. **All testing still uses mocked or fixture data** -- run
-`node isobar-relay.mjs --check` to confirm the live feed still parses, and when
-something misbehaves against the live services, look first at how each service formats
-its responses.
+Assistant-hosted-copy test all remain to be built. Nothing checks rendering or layout,
+which is why the wiring invariants above exist. **All testing still uses mocked or
+fixture data** -- run `node isobar-relay.mjs --check` to confirm the live feed still
+parses, and when something misbehaves against the live services, look first at how each
+service formats its responses.
 
 ## Development notes
 
@@ -277,6 +302,9 @@ its responses.
 - Keep companion server routes under `/isobar/`, and only have the app assume a same-origin server when it's served from `/` or `/isobar.html`. Both protect a Home Assistant-hosted copy.
 - Never pass Spotter Network contact fields through the companion server.
 - Re-run the screenshot suite after UI changes and look at the phone shots first. Most use is on the phone.
+- Sun and moon are computed locally on purpose. They need no network, so the Now tab still says something useful when the data services are unreachable.
+- Wind direction is meteorological everywhere: the direction the wind blows *from*. `uvFromWind` is the only place that converts, and a test pins all four cardinals.
+- Anything new the app fetches has to be key-free, and a test enforces the host list. The one keyed service stays behind the companion server.
 - `contourSegments` treats its level range as open at both ends: a level exactly equal to a cell's minimum is skipped by the guard, and at the maximum no corner tests strictly greater, so the cell classifies as empty. Pressure arrives as floats, so a 4 mb isobar effectively never lands on a sample value and no line is lost in practice. It does mean an integer-valued test field gets no contour at an integer level. Changing the corner test to `>=` (and the guard to `lev < mn`) would close it; a test pins the current behaviour so the change would have to be deliberate.
 
 ## Next up
