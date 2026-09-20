@@ -95,6 +95,16 @@ const MUTATIONS = [
     "v: 'wind_gusts_10m', kind: 'speed'", "v: 'wind_gusts_10m', kind: 'velocity'"],
   ['units: chart span converted as a value, not a difference', APP, 'test/pure.test.mjs',
     'const zero = conv(0), minSpanD = Math.abs(conv(minSpan) - zero);', 'const minSpanD = minSpan;'],
+  // --- request cache ---
+  ['cache: never expires anything', APP, 'test/pure.test.mjs',
+    'if (Date.now() - hit.at > ttlMs) { map.delete(key); return undefined; }', 'if (false) { return undefined; }'],
+  ['cache: ignores its own cap', APP, 'test/pure.test.mjs',
+    'while (map.size > max) map.delete(map.keys().next().value);', ''],
+  ['cache: reading no longer keeps a value warm', APP, 'test/pure.test.mjs',
+    'map.delete(key); map.set(key, hit);   // touch, so the cap evicts what is cold', ''],
+  ['cache: a rewrite does not refresh the deadline', APP, 'test/pure.test.mjs',
+    "    set(key, value) {\n      map.delete(key);\n      map.set(key, { at: Date.now(), value });",
+    "    set(key, value) {\n      const prev = map.get(key);\n      map.set(key, { at: prev ? prev.at : Date.now(), value });"],
   // --- forecast strips ---
   ['strips: a range bar can run off its own track', APP, 'test/derived.test.mjs',
     'const w = Math.min(100, Math.max(2, (b - a) / span * 100));\n  const x = Math.max(0, Math.min(100 - w, (a - min) / span * 100));',

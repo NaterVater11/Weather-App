@@ -205,6 +205,7 @@ The app lives in `isobar.html`: CSS in `<style>`, markup, then one script wrappe
 | Nowcast, air quality | `nowcast`, `aqiBand`, `dominantPollutant` |
 | Conditions tab | `WMO` codes, `reverseName`, `loadNow` |
 | Forecast strips | `WMO_GROUP`, `ICON_ART`, `weatherIcon`, `rangeBar`, `hourlySlice`, `dailyRows` |
+| Request cache | `makeCache`, used by the conditions tab and place names |
 | Units | `QUANTITY`, `quantity`, `unitLabel`, `toDisplay`, `fmtQty`, `setUnits` |
 | Shareable view | `parseView`, `buildView`, `nearestTimeIndex`, `syncHash`, `owns` |
 | Saved places | `placeKey`, `addPlace`, `removePlace`, `hasPlace`, `renderSaved` |
@@ -218,7 +219,7 @@ To add a model, add an entry to `MODELS` with `key`, `name`, `ids` (fallback ord
 - **Resolution.** Maps are built from 110 to 320 sample points, not the models' native grids. They're accurate but softer than paid apps, especially for small features like individual storms. The HRRR future radar is the exception: it uses real HRRR imagery.
 - **Future radar** only covers about 18 hours past the latest HRRR run.
 - **US only:** HRRR, NAM and NBM. NBM has no sounding.
-- **Open-Meteo's free tier** is for non-commercial use only and capped at 10,000 calls per day (5,000 per hour, 600 per minute). Long or variable-heavy requests count as more than one call, and each map load asks for 110 to 320 locations. If Isobar says the free limit is used up, switch to Light detail. Using it for clients or in a paid product needs an Open-Meteo subscription.
+- **Open-Meteo's free tier** is for non-commercial use only and capped at 10,000 calls per day (5,000 per hour, 600 per minute). Long or variable-heavy requests count as more than one call, and each map load asks for 110 to 320 locations. The conditions tab adds two requests per spot, cached for ten minutes so moving around the map is free. If Isobar says the free limit is used up, switch to Light detail. Using it for clients or in a paid product needs an Open-Meteo subscription.
 - **Compare totals** cover each model's full run, so HRRR's 48-hour total sits next to GFS's 10-day total. The note under the table says so.
 - **Place names are US only.** `api.weather.gov` names the nearest town for any US point; elsewhere a tapped spot keeps its coordinates, because no free worldwide reverse geocoder is in use.
 - **Units do not reach the Skew-T or the hodograph.** Those keep Celsius, knots and
@@ -236,7 +237,7 @@ To add a model, add an entry to `MODELS` with `key`, `name`, `ids` (fallback ord
 
 ```sh
 npm install   # test-only dependencies; the app itself still has none
-npm test      # 227 tests, no browser, about a second
+npm test      # 237 tests, no browser, about a second
 npm run mutate
 ```
 
@@ -302,12 +303,20 @@ handled by `showTab`, and every host the app fetches from is on the key-free lis
 
 `npm run mutate` breaks the app on purpose, one edit at a time, and checks that a test
 fails each time -- an inverted helicity sign, a shifted state boundary, a dropped guard,
-a leaked contact field. **All 47 mutations are currently caught.** The harness refuses a
+a leaked contact field. **All 51 mutations are currently caught.** The harness refuses a
 mutation whose pattern is missing or whose edit changes nothing, because a no-op
 mutation "passes" for the wrong reason and silently overstates the coverage. It backs
 the originals up outside the tree, so an interrupted run cannot leave the repo mutated.
 
 Pass a substring to run one: `npm run mutate -- helicity`.
+
+**Unverified against live services.** The conditions tab, the air quality reading, the
+nowcast and the forecast strips were written against Open-Meteo's and the NWS's
+documented response shapes, and every one of those calls is mocked or fixture-driven in
+the tests. Nothing here has yet been run against the real endpoints. If one of them
+returns a shape the app does not expect, the panel says so rather than breaking, but the
+first real run is still the first real test. `node isobar-relay.mjs --check` covers the
+companion server's two feeds; there is no equivalent for the browser-side endpoints yet.
 
 **Not yet written.** There is no browser coverage: the Playwright screenshot suite, the
 mocked-network UI tests, the chaser layer and video player tests, and the Home

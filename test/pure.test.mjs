@@ -590,3 +590,114 @@ test('chartSVG: a hidden model is left out, and an empty chart is empty', () => 
   charts.setCompare(fakeCompare([NaN, NaN]));
   assert.equal(charts.chartSVG({ title: 'T', key: 'temp', fmt: v => v }), '', 'all-NaN series, no chart');
 });
+
+/* ------------------------------------------------------------------ */
+/* Request cache                                                       */
+/* ------------------------------------------------------------------ */
+// Open-Meteo's free tier is metered per day and the conditions tab costs two requests
+// per spot. A cache that silently stopped caching would not break anything visible --
+// it would just quietly burn the allowance, which is the worst kind of regression.
+
+const cacheMod = await load(['makeCache']);
+
+/** Runs `fn` with the clock frozen, so TTL behaviour is exact rather than timing-dependent. */
+function atTime(start, fn) {
+  const real = Date.now;
+  let now = start;
+  Date.now = () => now;
+  try { return fn(ms => { now += ms; }); } finally { Date.now = real; }
+}
+
+test('makeCache: stores and returns a value', () => {
+  const c = cacheMod.makeCache(1000);
+  assert.equal(c.get('a'), undefined, 'a miss is undefined, not null');
+  assert.equal(c.set('a', 42), 42, 'set returns the value, so it can be used inline');
+  assert.equal(c.get('a'), 42);
+  assert.equal(c.size, 1);
+});
+
+test('makeCache: a value expires exactly at its time to live', () => {
+  atTime(1e9, advance => {
+    const c = cacheMod.makeCache(1000);
+    c.set('a', 'x');
+    advance(999);
+    assert.equal(c.get('a'), 'x', 'still fresh just before the deadline');
+    advance(2);
+    assert.equal(c.get('a'), undefined, 'gone just after it');
+    assert.equal(c.size, 0, 'and dropped, not just hidden');
+  });
+});
+
+test('makeCache: has() respects the time to live too', () => {
+  atTime(1e9, advance => {
+    const c = cacheMod.makeCache(1000);
+    c.set('a', 'x');
+    assert.equal(c.has('a'), true);
+    advance(1001);
+    assert.equal(c.has('a'), false);
+  });
+});
+
+test('makeCache: a falsy value is still a hit', () => {
+  // reverseName caches null for a spot with no town. If null read as a miss, every
+  // tap outside the US would ask again.
+  const c = cacheMod.makeCache(1000);
+  c.set('nowhere', null);
+  assert.equal(c.get('nowhere'), null);
+  assert.equal(c.has('nowhere'), true, 'a cached null is a hit, not a miss');
+  c.set('zero', 0);
+  assert.equal(c.get('zero'), 0);
+  assert.equal(c.has('zero'), true);
+  // Only a genuine miss reads as absent, which is why both tests compare against
+  // undefined rather than checking truthiness.
+  assert.equal(c.has('never-set'), false);
+});
+
+test('makeCache: keeps to its cap, oldest out first', () => {
+  const c = cacheMod.makeCache(1e6, 3);
+  for (const k of ['a', 'b', 'c', 'd']) c.set(k, k);
+  assert.equal(c.size, 3);
+  assert.equal(c.get('a'), undefined, 'the oldest was evicted');
+  assert.deepEqual(['b', 'c', 'd'].map(k => c.get(k)), ['b', 'c', 'd']);
+});
+
+test('makeCache: reading a value keeps it warm', () => {
+  const c = cacheMod.makeCache(1e6, 3);
+  c.set('a', 1); c.set('b', 2); c.set('c', 3);
+  c.get('a');            // a is now the most recently used
+  c.set('d', 4);         // evicts the coldest, which is b
+  assert.equal(c.get('a'), 1, 'the one that was read should have survived');
+  assert.equal(c.get('b'), undefined, 'the cold one should be gone');
+});
+
+test('makeCache: rewriting a key does not grow the cache', () => {
+  const c = cacheMod.makeCache(1e6, 3);
+  for (let i = 0; i < 10; i++) c.set('a', i);
+  assert.equal(c.size, 1);
+  assert.equal(c.get('a'), 9);
+});
+
+test('makeCache: rewriting refreshes the deadline', () => {
+  atTime(1e9, advance => {
+    const c = cacheMod.makeCache(1000);
+    c.set('a', 1);
+    advance(900);
+    c.set('a', 2);
+    advance(900);
+    assert.equal(c.get('a'), 2, 'the second write should have reset the clock');
+  });
+});
+
+test('makeCache: clear empties it', () => {
+  const c = cacheMod.makeCache(1e6);
+  c.set('a', 1); c.set('b', 2);
+  c.clear();
+  assert.equal(c.size, 0);
+  assert.equal(c.get('a'), undefined);
+});
+
+test('makeCache: two caches do not share state', () => {
+  const a = cacheMod.makeCache(1e6), b = cacheMod.makeCache(1e6);
+  a.set('k', 'from a');
+  assert.equal(b.get('k'), undefined);
+});

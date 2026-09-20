@@ -417,6 +417,35 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem('isobar:' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem('isobar:' + k, JSON.stringify(v)); } catch { /* storage off */ } }
 };
+/**
+ * A small time-to-live cache with a cap, least-recently-used first out.
+ *
+ * Open-Meteo's free tier is metered per day and the conditions tab costs two requests
+ * every time a spot is opened. Without this, tapping back and forth between two towns
+ * spends the allowance on answers the app already had.
+ */
+function makeCache(ttlMs, max = 40) {
+  const map = new Map();
+  return {
+    get(key) {
+      const hit = map.get(key);
+      if (!hit) return undefined;
+      if (Date.now() - hit.at > ttlMs) { map.delete(key); return undefined; }
+      map.delete(key); map.set(key, hit);   // touch, so the cap evicts what is cold
+      return hit.value;
+    },
+    set(key, value) {
+      map.delete(key);
+      map.set(key, { at: Date.now(), value });
+      while (map.size > max) map.delete(map.keys().next().value);
+      return value;
+    },
+    has(key) { return this.get(key) !== undefined; },
+    get size() { return map.size; },
+    clear() { map.clear(); }
+  };
+}
+
 const inFrame = (() => { try { return window.self !== window.top; } catch { return true; } })();
 
 // Previews such as the Claude app's file viewer block outside scripts and data. Say so plainly
@@ -2349,10 +2378,13 @@ const fmtDur = ms => `${Math.floor(ms / 3600000)} h ${Math.round(ms % 3600000 / 
 
 // api.weather.gov names the nearest town for any US point. Everywhere else keeps
 // coordinates, which is honest -- there is no free worldwide reverse geocoder here.
-const nameCache = new Map();
+// Town names do not change; an hour is conservative, and 200 is more spots than
+// anyone taps in one sitting.
+const nameCache = makeCache(60 * 60e3, 200);
 async function reverseName(lat, lon) {
   const key = placeKey(lat, lon);
-  if (nameCache.has(key)) return nameCache.get(key);
+  const known = nameCache.get(key);
+  if (known !== undefined) return known;
   let name = null;
   try {
     const r = await fetch(`https://api.weather.gov/points/${lat.toFixed(4)},${normLon(lon).toFixed(4)}`);
@@ -2366,13 +2398,21 @@ async function reverseName(lat, lon) {
   return name;
 }
 
+// Ten minutes is shorter than any of these models update, and long enough that moving
+// around the map costs nothing.
+const nowCache = makeCache(10 * 60e3, 30);
 let nowKey = '';
+
 async function loadNow() {
   const pt = state.point, box = $('#tabNow');
   if (!pt) return;
-  const key = `${pt.lat}|${pt.lon}`;
+  const key = placeKey(pt.lat, normLon(pt.lon));
   if (key === nowKey && box.dataset.ok === '1') return;
   nowKey = key;
+
+  const cached = nowCache.get(key);
+  if (cached) { renderNow(pt, cached.w, cached.a); return; }
+
   box.dataset.ok = '';
   box.innerHTML = '<p class="empty">Loading conditions…</p>';
 
@@ -2400,7 +2440,16 @@ async function loadNow() {
   }
   if (nowKey !== key) return;
   if (!w || !w.current) { box.innerHTML = '<p class="empty">Conditions are unavailable for this spot.</p>'; return; }
+  nowCache.set(key, { w, a });
+  renderNow(pt, w, a);
+}
 
+/**
+ * Draws the conditions tab from a payload, fresh or cached. Separate from the fetch so
+ * that switching units redraws from what is already in hand rather than asking again.
+ */
+function renderNow(pt, w, a) {
+  const box = $('#tabNow');
   const c = w.current;
   const cast = w.minutely_15 ? nowcast(w.minutely_15.time, w.minutely_15.precipitation) : null;
   const sun = sunTimes(new Date(), pt.lat, normLon(pt.lon));
